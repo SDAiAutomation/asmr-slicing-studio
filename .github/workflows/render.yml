@@ -1,6 +1,8 @@
 name: Render ASMR video
 
 on:
+  schedule:
+    - cron: "17 3 * * *"   # tous les jours 03:17 UTC (04:17 Paris hiver)
   workflow_dispatch:
     inputs:
       object_type:
@@ -26,9 +28,14 @@ concurrency:
   group: render-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  DRIVE_FOLDER_ID: "1iyVCJ4oT4RdsRtiQWIOpO9P48u0gEzd7"   # Google Drive > ASMR Slicing Videos
+
 jobs:
   render:
     runs-on: ubuntu-latest
+    env:
+      RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
     timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
@@ -76,19 +83,30 @@ jobs:
       - name: Config
         run: |
           python - <<'EOF'
-          import json, random
-          seed = "${{ inputs.random_seed }}".strip()
-          cfg = {
-            "object_type": "${{ inputs.object_type || 'mango' }}",
-            "target_piece_count": int("${{ inputs.target_piece_count || '15' }}"),
-            "cutting_mode": "${{ inputs.cutting_mode || 'cumulative' }}",
-            "random_seed": int(seed) if seed else random.randint(1, 10**6),
-            "render_engine": "cycles",
-            "cycles_samples": 48,
-            "output_path": "runs",
-          }
+          import json, random, datetime, os
+          event = os.environ["GITHUB_EVENT_NAME"]
+          base = {"render_engine": "cycles", "cycles_samples": 48, "output_path": "runs"}
+          if event == "schedule":
+              rot = json.load(open("assets/configs/daily_rotation.json"))
+              day = datetime.date.today()
+              cfg = dict(rot["rotation"][day.timetuple().tm_yday % len(rot["rotation"])])
+              cfg["random_seed"] = int(day.strftime("%Y%m%d"))
+              quality = rot.get("quality", "preview")
+          else:
+              seed = "${{ inputs.random_seed }}".strip()
+              cfg = {
+                "object_type": "${{ inputs.object_type || 'mango' }}",
+                "target_piece_count": int("${{ inputs.target_piece_count || '15' }}"),
+                "cutting_mode": "${{ inputs.cutting_mode || 'cumulative' }}",
+                "random_seed": int(seed) if seed else random.randint(1, 10**6),
+              }
+              quality = "${{ inputs.quality || 'preview' }}"
+          cfg.update(base)
           json.dump(cfg, open("ci_config.json", "w"), indent=1)
-          print(cfg)
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"QUALITY={quality}\n")
+              f.write(f"VIDEO_TAG={cfg['object_type']}-{cfg['target_piece_count']}p\n")
+          print(cfg, quality)
           EOF
 
       - name: Preview (plan + audio + Blender scene + stills)
@@ -98,7 +116,7 @@ jobs:
         run: |
           RD=$(ls -d runs/*/ | head -1)
           echo "RUN_DIR=$RD" >> "$GITHUB_ENV"
-          if [ "${{ inputs.quality }}" = "final" ]; then
+          if [ "$QUALITY" = "final" ]; then
             python scripts/run.py render "$RD" --final
           else
             python scripts/run.py render "$RD"
@@ -107,11 +125,27 @@ jobs:
       - name: Export MP4
         run: python scripts/run.py export "$RUN_DIR"
 
+      - name: Upload MP4 to Google Drive
+        if: ${{ env.RCLONE_CONF != '' }}
+        run: |
+          sudo apt-get install -y -qq rclone > /dev/null
+          mkdir -p ~/.config/rclone
+          printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+          REMOTE=$(rclone listremotes | head -1)
+          for f in "$RUN_DIR"*.mp4; do
+            rclone copyto "$f" "${REMOTE}$(date -u +%Y-%m-%d)_$(basename "$f")" --drive-root-folder-id "$DRIVE_FOLDER_ID"
+            echo "Uploaded $(basename "$f") to Google Drive folder $DRIVE_FOLDER_ID"
+          done
+
+      - name: Drive upload skipped
+        if: ${{ env.RCLONE_CONF == '' }}
+        run: echo "::warning::Secret RCLONE_CONF absent - MP4 disponible uniquement dans les Artifacts du run."
+
       - name: Upload video + previews + reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: asmr-${{ inputs.object_type || 'mango' }}-${{ inputs.target_piece_count || '15' }}-${{ github.run_number }}
+          name: asmr-${{ env.VIDEO_TAG }}-${{ github.run_number }}
           path: |
             runs/*/*.mp4
             runs/*/previews/
