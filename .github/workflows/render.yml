@@ -1,0 +1,122 @@
+name: Render ASMR video
+
+on:
+  workflow_dispatch:
+    inputs:
+      object_type:
+        description: "Objet (mango, soap, jelly, chocolate)"
+        default: "mango"
+      target_piece_count:
+        description: "Nombre final de morceaux"
+        default: "15"
+      cutting_mode:
+        description: "cumulative ou levels"
+        default: "cumulative"
+      quality:
+        description: "preview (540x960, rapide) ou final (1080x1920)"
+        default: "preview"
+      random_seed:
+        description: "Seed (vide = aléatoire)"
+        default: "42"
+      blender_series:
+        description: "Série Blender (ex. 4.5, 4.2)"
+        default: "4.5"
+
+concurrency:
+  group: render-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python deps + ffmpeg
+        run: |
+          pip install numpy scipy pytest
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libegl1 libxkbcommon0 libsm6 > /dev/null
+
+      - name: Resolve Blender download
+        id: bl
+        run: |
+          S="${{ inputs.blender_series || '4.5' }}"
+          URL="https://download.blender.org/release/Blender${S}/"
+          F=$(curl -fsSL "$URL" | grep -oE "blender-${S}\.[0-9]+-linux-x64\.tar\.xz" | sort -V | tail -1)
+          test -n "$F" || { echo "No Blender build found for $S"; exit 1; }
+          echo "file=$F" >> "$GITHUB_OUTPUT"
+          echo "url=${URL}${F}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Blender
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: ${{ steps.bl.outputs.file }}
+
+      - name: Install Blender
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender
+          curl -fsSL "${{ steps.bl.outputs.url }}" | tar -xJ -C ~/blender --strip-components=1
+
+      - name: Tools check
+        run: |
+          echo "BLENDER_PATH=$HOME/blender/blender" >> "$GITHUB_ENV"
+          BLENDER_PATH=$HOME/blender/blender python scripts/run.py check
+
+      - name: Tests (incl. real Blender geometry, 15 pieces)
+        run: python -m pytest tests -q
+
+      - name: Config
+        run: |
+          python - <<'EOF'
+          import json, random
+          seed = "${{ inputs.random_seed }}".strip()
+          cfg = {
+            "object_type": "${{ inputs.object_type || 'mango' }}",
+            "target_piece_count": int("${{ inputs.target_piece_count || '15' }}"),
+            "cutting_mode": "${{ inputs.cutting_mode || 'cumulative' }}",
+            "random_seed": int(seed) if seed else random.randint(1, 10**6),
+            "render_engine": "cycles",
+            "cycles_samples": 48,
+            "output_path": "runs",
+          }
+          json.dump(cfg, open("ci_config.json", "w"), indent=1)
+          print(cfg)
+          EOF
+
+      - name: Preview (plan + audio + Blender scene + stills)
+        run: python scripts/run.py preview ci_config.json
+
+      - name: Render frames
+        run: |
+          RD=$(ls -d runs/*/ | head -1)
+          echo "RUN_DIR=$RD" >> "$GITHUB_ENV"
+          if [ "${{ inputs.quality }}" = "final" ]; then
+            python scripts/run.py render "$RD" --final
+          else
+            python scripts/run.py render "$RD"
+          fi
+
+      - name: Export MP4
+        run: python scripts/run.py export "$RUN_DIR"
+
+      - name: Upload video + previews + reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asmr-${{ inputs.object_type || 'mango' }}-${{ inputs.target_piece_count || '15' }}-${{ github.run_number }}
+          path: |
+            runs/*/*.mp4
+            runs/*/previews/
+            runs/*/*.json
+            runs/*/soundtrack.wav
+            runs/*/blender.log
+          if-no-files-found: warn
+          retention-days: 14
