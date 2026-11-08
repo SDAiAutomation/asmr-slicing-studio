@@ -454,7 +454,7 @@ def build_grid_scene(plan, out_dir):
     span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
     board_w = max(0.36, span * 1.75)
     board_size = (board_w, board_w * 0.66)
-    B.setup_environment(scn, board_size=board_size)
+    B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
 
     steak = getattr(shape, "kind", "") == "extruded"
     if steak:
