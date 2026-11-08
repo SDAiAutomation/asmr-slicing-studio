@@ -38,6 +38,7 @@ DEFAULTS = {
     "format": "slices",                # "slices" (progressive halving) | "grid" (levels of grid cuts -> cubes)
     "cuts_sequence": None,             # grid format: cuts per level; None -> auto
     "max_cubes": 20000000,             # grid format: safety cap on the final level
+    "display_cubes_max": 1200000,      # grid format: cubes actually instanced per level (render budget)
     "label_cuts": "CUTS",
     "label_pieces": None,              # None -> "PIECES" (slices) / "CUBES" (grid)
     "grid_resolution": None,           # None -> auto from target count

@@ -817,10 +817,15 @@ def main():
                      "03_mid_progression": strokes[len(strokes) // 2]["end_frame"] - 1,
                      "04_final": plan["total_frames"] - 5}
             sheet = [(st["index"], st["end_frame"] - 1) for st in strokes]
+        print(f"ASMR_LOG scene built in {report.get('build_seconds')}s, rendering previews", flush=True)
         for name, f in shots.items():
+            t2 = time.time()
             render_still(scn, f, os.path.join(pv, name + ".png"))
+            print(f"ASMR_LOG still {name} (frame {f}) {time.time() - t2:.1f}s", flush=True)
         for i, f in sheet:
+            t2 = time.time()
             render_still(scn, f, os.path.join(pv, "strokes", f"s_{i:02d}.png"), small)
+            print(f"ASMR_LOG sheet still {i} (frame {f}) {time.time() - t2:.1f}s", flush=True)
         report["preview_seconds"] = round(time.time() - t1, 2)
         report["preview_frames"] = shots
         with open(os.path.join(out_dir, "blender_report.json"), "w", encoding="utf-8") as f:

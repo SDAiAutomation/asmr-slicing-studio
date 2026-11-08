@@ -47,7 +47,7 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     outputs:
       shards: ${{ steps.shards.outputs.list }}
       quality: ${{ steps.cfg.outputs.quality }}
@@ -89,6 +89,7 @@ jobs:
           EOF
 
       - name: Plan + audio + Blender scene + previews
+        timeout-minutes: 100
         env:
           CAPTION: ${{ inputs.caption }}
         run: |
@@ -96,6 +97,19 @@ jobs:
           mv runs/*/ work
           cp ci_config.json work/ci_config.json
           printf '%s' "$CAPTION" > work/caption.txt
+
+      - name: Ship logs to Drive on failure
+        if: failure() || cancelled()
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: |
+          [ -n "$RCLONE_CONF" ] || exit 0
+          sudo apt-get install -y -qq rclone > /dev/null
+          mkdir -p ~/.config/rclone && printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+          REMOTE=$(rclone listremotes | head -1)
+          for f in runs/*/blender.log runs/*/*.json work/blender.log work/*.json; do
+            [ -f "$f" ] && rclone copyto "$f" "${REMOTE}_logs/run${GITHUB_RUN_NUMBER}_$(basename "$f").txt" --drive-root-folder-id "$DRIVE_FOLDER_ID"
+          done; true
 
       - name: Split frames across machines
         id: shards

@@ -98,13 +98,20 @@ def run_blender(args, log_path, blend=None):
         raise SystemExit("Blender not found: set BLENDER_PATH")
     cmd = [t, "-b"] + ([blend] if blend else []) + ["-P", os.path.join(HERE, "blender_build.py"), "--"] + args
     t0 = time.time()
-    with open(log_path, "a", encoding="utf-8") as log:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        log.write(r.stdout)
+    start = os.path.getsize(log_path) if os.path.exists(log_path) else 0
+    with open(log_path, "a", encoding="utf-8") as log:  # streamed: readable even if killed
+        r = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, text=True)
+    with open(log_path, encoding="utf-8", errors="replace") as log:
+        log.seek(start)
+        out = log.read()
+    for line in out.splitlines():
+        if line.startswith("ASMR_LOG"):
+            print(line, flush=True)
     if r.returncode:
+        print(out[-3000:])
         raise SystemExit(f"Blender failed, see {log_path}")
     tag = {"build": "ASMR_REPORT ", "render": "ASMR_RENDER "}
-    for line in r.stdout.splitlines():
+    for line in out.splitlines():
         for v in tag.values():
             if line.startswith(v):
                 return json.loads(line[len(v):]), time.time() - t0

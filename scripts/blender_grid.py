@@ -233,30 +233,50 @@ def collapse_group(mat):
 
 
 def cells(shape, lvl):
+    """Occupied cell centres, their kind (0 flesh / 1 skin-fat) and a surface flag."""
     lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
     axes = [lo[a] + (np.arange(n[a]) + 0.5) * ext[a] / n[a] for a in range(3)]
-    pts, kinds = [], []
     Y, Z = np.meshgrid(axes[1], axes[2], indexing="ij")
     occ = np.zeros(tuple(n), bool)
     for i, x in enumerate(axes[0]):
         occ[i] = shape.inside(np.full_like(Y, x), Y, Z)
+    inner = occ.copy()
+    for a in range(3):
+        for sgn in (1, -1):
+            sh = np.roll(occ, sgn, axis=a)
+            sl = [slice(None)] * 3
+            sl[a] = 0 if sgn == 1 else -1
+            sh[tuple(sl)] = False
+            inner &= sh
+    surf = occ & ~inner
     if hasattr(shape, "is_fat"):
         kind = np.zeros(occ.shape, np.float32)
         for i, x in enumerate(axes[0]):
             kind[i] = shape.is_fat(np.full_like(Y, x), Y, Z)
-    else:  # outer layer of cells = skin
-        inner = occ.copy()
-        for a in range(3):
-            for sgn in (1, -1):
-                sh = np.roll(occ, sgn, axis=a)
-                sl = [slice(None)] * 3
-                sl[a] = 0 if sgn == 1 else -1
-                sh[tuple(sl)] = False
-                inner &= sh
-        kind = (occ & ~inner).astype(np.float32)
+    else:
+        kind = surf.astype(np.float32)
     idx = np.nonzero(occ)
     co = np.stack([axes[0][idx[0]], axes[1][idx[1]], axes[2][idx[2]]], 1).astype(np.float32)
-    return co, kind[idx].astype(np.float32)
+    return co, kind[idx].astype(np.float32), surf[idx]
+
+
+def display_subset(co, kinds, surf, budget, seed):
+    """Render-time budget: above `budget` cubes, keep every surface cube plus a random
+    share of the hidden interior ones. The counter still shows the exact total; cubes
+    this small are below one pixel, so the picture does not change."""
+    n = len(co)
+    if n <= budget:
+        return co, kinds
+    rng = np.random.default_rng(seed)
+    s_idx = np.flatnonzero(surf)
+    i_idx = np.flatnonzero(~surf)
+    if len(s_idx) >= budget:
+        keep = rng.choice(s_idx, budget, replace=False)
+    else:
+        extra = rng.choice(i_idx, min(len(i_idx), budget - len(s_idx)), replace=False)
+        keep = np.concatenate([s_idx, extra])
+    keep.sort()
+    return co[keep], kinds[keep]
 
 
 def cubes_object(name, co, kinds, ng, ids, size, height, mat):
@@ -408,10 +428,15 @@ def build_grid_scene(plan, out_dir):
         last_knife = f_up + 4
 
         # cubes
-        co, kinds = cells(shape, lvl)
+        t_l = time.time()
+        co, kinds, surf = cells(shape, lvl)
         if len(co) != lvl["cubes"]:
             report["failures"].append({"level": li, "planned": lvl["cubes"], "built": int(len(co))})
+        built = int(len(co))
+        co, kinds = display_subset(co, kinds, surf, int(cfg.get("display_cubes_max", 1200000)), li)
         cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
+        print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
+              f"in {time.time() - t_l:.1f}s", flush=True)
         B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
         B.interp("BEZIER")
@@ -424,7 +449,7 @@ def build_grid_scene(plan, out_dir):
         cob.location = (-0.6, 0, 0)
         cob.keyframe_insert("location", frame=lvl["end_frame"])
         report["levels"].append({"level": li, "cuts": lvl["cuts"], "cubes_planned": lvl["cubes"],
-                                 "cubes_built": int(len(co))})
+                                 "cubes_built": built, "cubes_displayed": int(len(co))})
 
     # loop: intact object returns to the opening pose, counters back to their opening values
     if plan["levels"]:
