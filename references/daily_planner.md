@@ -11,6 +11,13 @@ Chaque jour, la tâche planifiée Claude décide **une** vidéo, la lance sur Gi
 - **`slices`** : découpe progressive en morceaux, compteurs CUTS et PIECES. Pour varier. Toujours en `cutting_mode: "levels"` : chaque niveau repart de l'objet intact (c'est la règle des formats qui marchent), `progression_sequence` = nombre de morceaux par niveau (ex. [2, 5, 15, 50, 200, 1000]).
 - Règle commune : chaque niveau repart toujours de la forme initiale ; le compteur du haut affiche « coupes faites / coupes du niveau ».
 
+## Ce qui nous distingue des chaînes concurrentes (à exploiter)
+- **Comptes exacts** : nos chiffres sont calculés, pas « ≈ ». À dire dans la légende ("every cube counted").
+- **Boucle parfaite** : la vidéo finit sur l'objet intact dans la pose d'ouverture → relectures automatiques.
+- **Action dès 0,5 s** : pas d'intro, la première coupe tombe tout de suite.
+- **Séries** : "Day N" avec un nombre qui grandit chaque jour, et la réponse à la devinette de la veille dans la légende.
+- **Variété d'objets** avec le même format (steak, gâteau, mangue…), pas un seul objet.
+
 ## Leviers d'engagement (choisir 1 angle principal par jour)
 1. **Nombre absurde** : 1 000, 5 000, 10 000, 25 000 morceaux. Le compteur est le héros. Hook du type "Can it reach 25,000 pieces?".
 2. **Devinette** : hook "Guess the final number" + end_text "Comment your guess for tomorrow" → appelle les commentaires.

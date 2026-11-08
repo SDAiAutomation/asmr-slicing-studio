@@ -73,7 +73,7 @@ def plan(cfg):
 
     levels, strokes, cuts_ev, pieces_ev = [], [], [], []
     frame = 1
-    intro = int(0.9 * fps)
+    intro = int(0.4 * fps)   # first cut within half a second: the hook is the action itself
     for li, C in enumerate(cfg["cuts_sequence"]):
         cuts = split_cuts(ext, C)
         n = cuts + 1
@@ -132,11 +132,14 @@ def plan(cfg):
         levels.append(lvl)
         strokes.extend(lvl_strokes)
         frame = lvl["end_frame"]
-    total = frame + int(1.2 * fps)
+    # seamless loop: a fresh, uncut object slides back into the exact opening pose,
+    # so the last frame flows into the first one when TikTok/Reels replays the video
+    loop_in = frame
+    total = frame + int(1.0 * fps)
     return {
         "version": 3, "kind": "grid", "config": cfg, "fps": fps,
         "total_frames": int(total), "duration_s": total / fps,
-        "levels": levels, "strokes": strokes,
+        "levels": levels, "strokes": strokes, "loop_in": int(loop_in),
         "counters": {"cuts": cuts_ev, "pieces": pieces_ev},
         "stats": {"levels": len(levels), "blade_strokes": len(strokes),
                   "final_cubes": levels[-1]["cubes"] if levels else 0,

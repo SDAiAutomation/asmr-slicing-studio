@@ -426,6 +426,26 @@ def build_grid_scene(plan, out_dir):
         report["levels"].append({"level": li, "cuts": lvl["cuts"], "cubes_planned": lvl["cubes"],
                                  "cubes_built": int(len(co))})
 
+    # loop: intact object returns to the opening pose, counters back to their opening values
+    if plan["levels"]:
+        li0 = plan["levels"][0]
+        lf, tot = plan["loop_in"], plan["total_frames"]
+        ob = bpy.data.objects.new("LoopObject", me)
+        scn.collection.objects.link(ob)
+        B.set_visibility(ob, lf, None)
+        B.interp("BEZIER")
+        ob.location = (0.45, 0, 0)
+        ob.keyframe_insert("location", frame=lf)
+        ob.location = (0, 0, 0)
+        ob.keyframe_insert("location", frame=min(tot - 2, lf + int(0.6 * fps)))
+        for ax in range(3):
+            key_param(f"lo_{ax}", lf, li0["lo"][ax])
+            key_param(f"cell_{ax}", lf, li0["cell_size"][ax])
+            key_param(f"n_{ax}", lf, 0)
+        key_param("cz", lf, li0["cuts_xyz"][2])
+        cuts_ev.append((lf, 0, li0["cuts"]))
+        pieces_ev.append((lf, 1))
+
     cam = grid_camera(plan, lo, hi)
     B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"])
     B.setup_render(scn, cfg, out_dir, final=False)
