@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-from common import OBJECTS, MATERIALS, load_config
+from common import OBJECTS, MATERIALS, grid_occupancy, load_config
 
 
 def split_cuts(ext, C):
@@ -39,14 +39,14 @@ def split_cuts(ext, C):
     return cuts
 
 
+_OCC = {}
+
+
 def occupancy(shape, lo, ext, n):
-    """Bool grid of cells whose centre lies inside the shape (computed in x-slabs)."""
-    axes = [lo[a] + (np.arange(n[a]) + 0.5) * ext[a] / n[a] for a in range(3)]
-    occ = np.zeros(tuple(n), bool)
-    Y, Z = np.meshgrid(axes[1], axes[2], indexing="ij")
-    for i, x in enumerate(axes[0]):
-        occ[i] = shape.inside(np.full_like(Y, x), Y, Z)
-    return occ, axes
+    key = (id(shape), tuple(int(v) for v in n))
+    if key not in _OCC:  # duration fitting re-plans several times: compute each grid once
+        _OCC[key] = grid_occupancy(shape, lo, ext, n)
+    return _OCC[key]
 
 
 def boxes_count(occ, active):
@@ -62,7 +62,7 @@ def boxes_count(occ, active):
     return int(np.count_nonzero(r))
 
 
-def plan(cfg):
+def _plan(cfg, ts=1.0):
     t0 = time.time()
     shape = OBJECTS[cfg["object_type"]]
     fps = cfg["fps"]
@@ -84,9 +84,9 @@ def plan(cfg):
         if cubes > cfg["max_cubes"]:
             break
         start = frame
-        enter = int(0.45 * fps) if li else 0
+        enter = max(6, int(0.45 * fps * ts)) if li else 0
         f = frame + enter + (intro if li == 0 else int(0.25 * fps))
-        dur = int(round(fps * min(4.5, max(1.0, 1.0 + 0.55 * math.log2(C / 4 + 1)))))
+        dur = max(int(0.5 * fps), int(round(ts * fps * min(4.5, max(1.0, 1.0 + 0.55 * math.log2(C / 4 + 1))))))
         # stroke order: X cuts left->right, then Y cuts front->back, then Z (horizontal)
         order = [(0, k) for k in range(1, cuts[0] + 1)] + \
                 [(1, k) for k in range(1, cuts[1] + 1)] + \
@@ -119,9 +119,9 @@ def plan(cfg):
                 pieces_ev.append((int(sf), cnt, li))
                 last_eval_frame = sf
         f_end = f + dur + 2
-        collapse = int(0.75 * fps)
-        hold = int(0.7 * fps)
-        exit_f = int(0.4 * fps)
+        collapse = max(int(0.45 * fps), int(0.75 * fps * ts))
+        hold = max(int(0.35 * fps), int(0.7 * fps * ts))
+        exit_f = max(int(0.3 * fps), int(0.4 * fps * ts))
         lvl = {"level": li, "cuts": int(C), "cuts_xyz": cuts.tolist(), "cells_xyz": n.tolist(),
                "cubes": cubes, "start_frame": start, "enter_frames": enter,
                "strokes_start": f, "strokes_end": f + dur, "collapse_start": f_end,
@@ -145,6 +145,22 @@ def plan(cfg):
                   "final_cubes": levels[-1]["cubes"] if levels else 0,
                   "plan_seconds": round(time.time() - t0, 2)},
     }
+
+
+def plan(cfg):
+    """Fits the configured video_duration (seconds) when given, by scaling the pacing."""
+    p = _plan(cfg)
+    target = cfg.get("video_duration")
+    if target:
+        ts = 1.0
+        for _ in range(6):
+            ts *= target / p["duration_s"]
+            ts = min(2.5, max(0.25, ts))
+            p = _plan(cfg, ts)
+            if abs(p["duration_s"] - target) < 1.0:
+                break
+        p["stats"]["time_scale"] = round(ts, 3)
+    return p
 
 
 def main():

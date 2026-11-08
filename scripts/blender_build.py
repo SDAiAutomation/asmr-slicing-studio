@@ -470,7 +470,7 @@ def setup_environment(scn, board_size=(0.46, 0.34)):
     bpy.ops.mesh.primitive_plane_add(size=6, location=(0, 0, -0.0221))
     floor = bpy.context.object
     floor.name = "Table"
-    floor.data.materials.append(simple_mat("Table", (0.035, 0.032, 0.038), 0.65))
+    floor.data.materials.append(simple_mat("Table", (0.016, 0.015, 0.019), 0.7))
     world = bpy.data.worlds.new("World")
     scn.world = world
     world.use_nodes = True
@@ -526,9 +526,14 @@ def build_scene(plan, out_dir):
     scn.render.fps = fps
     scn.frame_start, scn.frame_end = 1, plan["total_frames"]
 
-    skin, flesh = make_skin(M, shape), make_flesh(M)
-    rim = simple_mat("Rim", M["rim"], 0.35)
-    mats = [skin, flesh, rim]
+    extruded = getattr(shape, "kind", "") == "extruded"
+    if extruded:
+        import blender_grid
+        mats = blender_grid.steak_materials(M)
+    else:
+        skin, flesh = make_skin(M, shape), make_flesh(M)
+        rim = simple_mat("Rim", M["rim"], 0.35)
+        mats = [skin, flesh, rim]
 
     setup_environment(scn)
 
@@ -541,7 +546,7 @@ def build_scene(plan, out_dir):
     obj_of = {}
     report = {"hits": [], "failures": [], "non_manifold": 0, "mismatch_hits": 0}
     root_ids = [p["id"] for p in plan["pieces"] if p["parent"] is None]
-    root_bm = build_root_mesh(shape)
+    root_bm = blender_grid.extruded_mesh(shape) if extruded else build_root_mesh(shape)
     root_vol = abs(root_bm.calc_volume(signed=True))
     for rid in root_ids:
         bm_of[rid] = root_bm.copy()

@@ -19,30 +19,44 @@ import numpy as np
 from mathutils import Vector
 
 import blender_build as B
-from common import MATERIALS, OBJECTS
+from common import MATERIALS, OBJECTS, grid_occupancy
 
 
 # ---------------------------------------------------------------------------
 # meshes
 # ---------------------------------------------------------------------------
-def extruded_mesh(shape):
+def extruded_mesh(shape, rings=16, n=200):
+    """Organic slab: concentric rings follow the outline, top height = shape.top(x, y)
+    (swells + rounded edge), fat cap faces on the outer rings, muscle elsewhere."""
     bm = bmesh.new()
-    out = shape.outline(240)
-    inner = out * (1 - shape.fat)
-    n = len(out)
-    b = [bm.verts.new((x, y, 0.0)) for x, y in out]
-    t = [bm.verts.new((x, y, shape.h)) for x, y in out]
-    ti = [bm.verts.new((x, y, shape.h)) for x, y in inner]
-    f = bm.faces.new(list(reversed(b)))
+    out = shape.outline(n)
+    has_top = hasattr(shape, "top")
+    scales = [1.0 - k / rings for k in range(rings)]  # 1 .. ~0.06
+    ring_v = []
+    for sc in scales:
+        row = []
+        for x, y in out * sc:
+            z = float(shape.top(x, y)) if has_top else shape.h
+            row.append(bm.verts.new((float(x), float(y), z)))
+        ring_v.append(row)
+    centre = bm.verts.new((0.0, 0.0, float(shape.top(0.0, 0.0)) if has_top else shape.h))
+    bot = [bm.verts.new((float(x), float(y), 0.0)) for x, y in out]
+    f = bm.faces.new(list(reversed(bot)))
     f.material_index = 1
     for i in range(n):
         j = (i + 1) % n
-        side = bm.faces.new((b[i], b[j], t[j], t[i]))
+        side = bm.faces.new((bot[i], bot[j], ring_v[0][j], ring_v[0][i]))
         side.material_index, side.smooth = 1, True
-        ring = bm.faces.new((t[i], t[j], ti[j], ti[i]))
-        ring.material_index = 0
-    top = bm.faces.new(ti)
-    top.material_index = 1
+    for k in range(rings - 1):
+        fat_ring = scales[k + 1] > 1 - shape.fat
+        for i in range(n):
+            j = (i + 1) % n
+            q = bm.faces.new((ring_v[k][i], ring_v[k][j], ring_v[k + 1][j], ring_v[k + 1][i]))
+            q.material_index, q.smooth = (0 if fat_ring else 1), True
+    for i in range(n):
+        j = (i + 1) % n
+        t = bm.faces.new((ring_v[-1][i], ring_v[-1][j], centre))
+        t.material_index, t.smooth = 1, True
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     return bm
 
@@ -58,31 +72,138 @@ def object_mesh(shape, name):
 # ---------------------------------------------------------------------------
 # materials
 # ---------------------------------------------------------------------------
+def meat_group(M):
+    """Muscle shading from a 3D coordinate: colour variation, oriented fibres, irregular
+    marbling. Driven by the object's original-space position, so the marbling continues
+    through every cut face and into every cube."""
+    if "SteakMuscle" in bpy.data.node_groups:
+        return bpy.data.node_groups["SteakMuscle"]
+    g = bpy.data.node_groups.new("SteakMuscle", "ShaderNodeTree")
+    g.interface.new_socket(name="Vector", in_out="INPUT", socket_type="NodeSocketVector")
+    for nm, st in (("Color", "NodeSocketColor"), ("Roughness", "NodeSocketFloat"), ("Height", "NodeSocketFloat")):
+        g.interface.new_socket(name=nm, in_out="OUTPUT", socket_type=st)
+    N, L = g.nodes, g.links
+    gi, go = N.new("NodeGroupInput"), N.new("NodeGroupOutput")
+    # colour blotches (deep red <-> brighter red)
+    blot = N.new("ShaderNodeTexNoise")
+    blot.inputs["Scale"].default_value = 9.0
+    blot.inputs["Detail"].default_value = 4.0
+    L.new(gi.outputs["Vector"], blot.inputs["Vector"])
+    cr = B.ramp(g, [(0.3, M["flesh_deep"]), (0.7, M["flesh"])])
+    L.new(blot.outputs["Fac"], cr.inputs["Fac"])
+    # muscle fibres: fine bands across the steak, slightly wavy
+    mp = N.new("ShaderNodeMapping")
+    mp.inputs["Rotation"].default_value = (0.0, 0.0, 0.6)
+    L.new(gi.outputs["Vector"], mp.inputs["Vector"])
+    fib = N.new("ShaderNodeTexWave")
+    fib.bands_direction = "X"
+    fib.inputs["Scale"].default_value = 95.0
+    fib.inputs["Distortion"].default_value = 3.0
+    fib.inputs["Detail"].default_value = 3.0
+    L.new(mp.outputs["Vector"], fib.inputs["Vector"])
+    fr = B.ramp(g, [(0.0, (0.82, 0.82, 0.82)), (1.0, (1.0, 1.0, 1.0))])
+    L.new(fib.outputs["Fac"], fr.inputs["Fac"])
+    mul = N.new("ShaderNodeMix")
+    mul.data_type, mul.blend_type = "RGBA", "MULTIPLY"
+    ins = [x for x in mul.inputs if x.enabled]
+    [x for x in ins if x.type == "VALUE"][0].default_value = 1.0
+    ca, cb = [x for x in ins if x.type == "RGBA"][:2]
+    L.new(cr.outputs["Color"], ca)
+    L.new(fr.outputs["Color"], cb)
+    mout = [x for x in mul.outputs if x.enabled and x.type == "RGBA"][0]
+    # marbling: thin, branching fat veins from a distorted 3D noise iso-band
+    mn = N.new("ShaderNodeTexNoise")
+    mn.inputs["Scale"].default_value = 16.0
+    mn.inputs["Detail"].default_value = 8.0
+    mn.inputs["Roughness"].default_value = 0.62
+    mn.inputs["Distortion"].default_value = 0.8
+    L.new(gi.outputs["Vector"], mn.inputs["Vector"])
+    band = N.new("ShaderNodeMath")
+    band.operation = "PINGPONG"
+    band.inputs[1].default_value = 0.5
+    L.new(mn.outputs["Fac"], band.inputs[0])
+    # coarse mask: marbling denser in some areas, absent in others
+    mask = N.new("ShaderNodeTexNoise")
+    mask.inputs["Scale"].default_value = 4.0
+    L.new(gi.outputs["Vector"], mask.inputs["Vector"])
+    mk = B.ramp(g, [(0.42, (0, 0, 0)), (0.62, (1, 1, 1))])
+    L.new(mask.outputs["Fac"], mk.inputs["Fac"])
+    vr = B.ramp(g, [(0.0, (1, 1, 1)), (0.035, (0, 0, 0))])
+    L.new(band.outputs[0], vr.inputs["Fac"])
+    vm = N.new("ShaderNodeMath")
+    vm.operation = "MULTIPLY"
+    L.new(vr.outputs["Color"], vm.inputs[0])
+    L.new(mk.outputs["Color"], vm.inputs[1])
+    fat = N.new("ShaderNodeMix")
+    fat.data_type = "RGBA"
+    fins = [x for x in fat.inputs if x.enabled]
+    L.new(vm.outputs[0], [x for x in fins if x.type == "VALUE"][0])
+    fa, fb = [x for x in fins if x.type == "RGBA"][:2]
+    L.new(mout, fa)
+    fb.default_value = (0.86, 0.78, 0.70, 1)
+    L.new([x for x in fat.outputs if x.enabled and x.type == "RGBA"][0], go.inputs["Color"])
+    # wet, uneven sheen: rougher where there is fat
+    rg = N.new("ShaderNodeMath")
+    rg.operation = "MULTIPLY_ADD"
+    rg.inputs[1].default_value = 0.25
+    rg.inputs[2].default_value = 0.28
+    L.new(vm.outputs[0], rg.inputs[0])
+    L.new(rg.outputs[0], go.inputs["Roughness"])
+    hh = N.new("ShaderNodeMath")
+    hh.operation = "ADD"
+    L.new(fib.outputs["Fac"], hh.inputs[0])
+    L.new(vm.outputs[0], hh.inputs[1])
+    L.new(hh.outputs[0], go.inputs["Height"])
+    return g
+
+
+def _wire_meat(mat, nt, bsdf, M, coord_socket):
+    L = nt.links
+    grp = nt.nodes.new("ShaderNodeGroup")
+    grp.node_tree = meat_group(M)
+    L.new(coord_socket, grp.inputs["Vector"])
+    L.new(grp.outputs["Color"], bsdf.inputs["Base Color"])
+    L.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
+    bump = nt.nodes.new("ShaderNodeBump")
+    B.set_input(bump, "Strength", 0.12)
+    B.set_input(bump, "Distance", 0.0004)
+    L.new(grp.outputs["Height"], bump.inputs["Height"])
+    L.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    B.set_input(bsdf, ["Subsurface Weight", "Subsurface"], 0.22)
+    B.set_input(bsdf, "Subsurface Radius", (0.012, 0.003, 0.002))
+    B.set_input(bsdf, "Subsurface Scale", 0.01)
+    B.set_input(bsdf, ["Coat Weight", "Clearcoat"], 0.25)       # slight surface moisture
+    B.set_input(bsdf, ["Coat Roughness", "Clearcoat Roughness"], 0.12)
+
+
 def meat_mat(M):
     mat, nt, bsdf = B.principled("Meat")
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    _wire_meat(mat, nt, bsdf, M, tc.outputs["Object"])
+    return mat
+
+
+def fat_mat(M):
+    mat, nt, bsdf = B.principled("FatCap")
     L = nt.links
     tc = nt.nodes.new("ShaderNodeTexCoord")
-    noise = nt.nodes.new("ShaderNodeTexNoise")
-    B.set_input(noise, "Scale", 14.0)
-    B.set_input(noise, "Detail", 6.0)
-    L.new(tc.outputs["Object"], noise.inputs["Vector"])
-    # thin white marbling veins: narrow band of the noise field
-    band = nt.nodes.new("ShaderNodeMath")
-    band.operation = "PINGPONG"
-    band.inputs[1].default_value = 0.08
-    L.new(noise.outputs["Fac"], band.inputs[0])
-    vr = B.ramp(nt, [(0.0, (1, 1, 1)), (0.006, (0, 0, 0))])
-    L.new(band.outputs[0], vr.inputs["Fac"])
-    m, f, a, b, o = B.mix_rgb(nt)
-    L.new(vr.outputs["Color"], f)
-    a.default_value = (*M["flesh"], 1)
-    b.default_value = (0.95, 0.88, 0.82, 1)
-    L.new(o, bsdf.inputs["Base Color"])
-    B.set_input(bsdf, "Roughness", M["flesh_roughness"])
-    B.set_input(bsdf, ["Subsurface Weight", "Subsurface"], M["flesh_subsurface"])
-    B.set_input(bsdf, "Subsurface Radius", (0.01, 0.003, 0.002))
-    B.set_input(bsdf, "Subsurface Scale", 0.01)
+    nz = nt.nodes.new("ShaderNodeTexNoise")
+    B.set_input(nz, "Scale", 40.0)
+    L.new(tc.outputs["Object"], nz.inputs["Vector"])
+    r = B.ramp(nt, [(0.35, (0.80, 0.70, 0.58)), (0.65, (0.93, 0.87, 0.78))])
+    L.new(nz.outputs["Fac"], r.inputs["Fac"])
+    L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
+    B.set_input(bsdf, "Roughness", 0.38)
+    B.set_input(bsdf, ["Subsurface Weight", "Subsurface"], 0.3)
+    B.set_input(bsdf, "Subsurface Radius", (0.01, 0.008, 0.005))
+    B.set_input(bsdf, "Subsurface Scale", 0.006)
+    B.set_input(bsdf, ["Coat Weight", "Clearcoat"], 0.2)
     return mat
+
+
+def steak_materials(M):
+    fat = fat_mat(M)
+    return [fat, meat_mat(M), fat]
 
 
 def add_seams(mat, P, nodes_out):
@@ -144,22 +265,29 @@ def add_seams(mat, P, nodes_out):
 def cube_mat(M, steak):
     mat, nt, bsdf = B.principled("Cubes")
     L = nt.links
-    at = nt.nodes.new("ShaderNodeAttribute")
-    at.attribute_type = "INSTANCER"
-    at.attribute_name = "kind"
-    outer = (0.95, 0.88, 0.82) if steak else M["skin_base"]
-    r = B.ramp(nt, [(0.0, M["flesh"]), (1.0, outer)])
-    r.color_ramp.interpolation = "CONSTANT"
-    r.color_ramp.elements[1].position = 0.5
-    L.new(at.outputs["Fac"], r.inputs["Fac"])
-    L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
-    B.set_input(bsdf, "Roughness", 0.35)
+    kind = nt.nodes.new("ShaderNodeAttribute")
+    kind.attribute_type, kind.attribute_name = "INSTANCER", "kind"
+    if steak:
+        orig = nt.nodes.new("ShaderNodeAttribute")
+        orig.attribute_type, orig.attribute_name = "INSTANCER", "orig"
+        _wire_meat(mat, nt, bsdf, M, orig.outputs["Vector"])
+        # fat-cap cubes: creamy white instead of muscle
+        link = next(l for l in nt.links if l.to_socket == bsdf.inputs["Base Color"])
+        m, f, a, b, o = B.mix_rgb(nt)
+        L.new(kind.outputs["Fac"], f)
+        L.new(link.from_socket, a)
+        b.default_value = (0.90, 0.83, 0.74, 1)
+        L.new(o, bsdf.inputs["Base Color"])
+    else:
+        r = B.ramp(nt, [(0.0, M["flesh"]), (1.0, M["skin_base"])])
+        r.color_ramp.interpolation = "CONSTANT"
+        r.color_ramp.elements[1].position = 0.5
+        L.new(kind.outputs["Fac"], r.inputs["Fac"])
+        L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
+        B.set_input(bsdf, "Roughness", 0.35)
     return mat
 
 
-# ---------------------------------------------------------------------------
-# cubes (Geometry Nodes instances)
-# ---------------------------------------------------------------------------
 def collapse_group(mat):
     ng = bpy.data.node_groups.new("CubeCollapse", "GeometryNodeTree")
     I = ng.interface
@@ -233,11 +361,8 @@ def collapse_group(mat):
 def cells(shape, lvl):
     """Occupied cell centres, their kind (0 flesh / 1 skin-fat) and a surface flag."""
     lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
-    axes = [lo[a] + (np.arange(n[a]) + 0.5) * ext[a] / n[a] for a in range(3)]
+    occ, axes = grid_occupancy(shape, lo, ext, n)
     Y, Z = np.meshgrid(axes[1], axes[2], indexing="ij")
-    occ = np.zeros(tuple(n), bool)
-    for i, x in enumerate(axes[0]):
-        occ[i] = shape.inside(np.full_like(Y, x), Y, Z)
     inner = occ.copy()
     for a in range(3):
         for sgn in (1, -1):
@@ -283,6 +408,8 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
     me.vertices.foreach_set("co", co.ravel())
     att = me.attributes.new("kind", "FLOAT", "POINT")
     att.data.foreach_set("value", kinds)
+    org = me.attributes.new("orig", "FLOAT_VECTOR", "POINT")  # original position -> shading
+    org.data.foreach_set("vector", co.ravel())
     me.update()
     ob = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(ob)
@@ -316,8 +443,7 @@ def build_grid_scene(plan, out_dir):
 
     steak = getattr(shape, "kind", "") == "extruded"
     if steak:
-        fat = B.simple_mat("Fat", M["skin_base"], 0.45)
-        mats = [fat, meat_mat(M), fat]
+        mats = steak_materials(M)
     else:
         mats = [B.make_skin(M, shape), B.make_flesh(M), B.simple_mat("Rim", M["rim"], 0.35)]
     params = {}
@@ -502,7 +628,5 @@ def grid_camera(plan, lo, hi, board_size):
     cam.location = target + view * dist
     cam.rotation_mode = "QUATERNION"
     cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
-    cd.dof.use_dof = True
-    cd.dof.focus_distance = dist
-    cd.dof.aperture_fstop = 5.6
+    # no depth of field: the counters are camera-attached and must stay sharp
     return cam

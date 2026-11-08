@@ -167,6 +167,13 @@ def chop(rng, P, samples, dur, nh=1):
     return out[: m + len(y)]
 
 
+def whoosh(rng, dur=0.16):
+    """Knife approach: a soft air swell, quiet (ASMR stays in front)."""
+    n = int(SR * dur)
+    y = bandnoise(rng, n, 500, 3500)
+    return y * np.sin(np.linspace(0, np.pi, n)) ** 2 * 0.25
+
+
 def grid_events(plan, buf, P, rng, samples, events, t_of):
     """Grid format: a chop per stroke frame, a crumble cascade when the object collapses."""
     # keep a readable rhythm: at most ~10 chops per second, extra strokes thicken each chop
@@ -175,9 +182,14 @@ def grid_events(plan, buf, P, rng, samples, events, t_of):
     groups = {}
     for st in plan["strokes"]:
         groups.setdefault(st["frame"] - (st["frame"] - 1) % step, []).append(st)
+    prev_f = -999
     for f in sorted(groups):
         g = groups[f]
         nh = len(g)
+        if f - prev_f > 8:  # the knife travels before this chop: approach sound
+            place(buf, max(0.0, t_of(f) - 0.16), whoosh(rng), 0.0, rng.uniform(0.6, 0.9))
+            events.append({"t": max(0.0, t_of(f) - 0.16), "type": "approach"})
+        prev_f = f
         x = np.mean([s_["pos"] if s_["axis"] == 0 else 0.0 for s_ in g])
         span = max(0.05, plan["levels"][g[0]["level"]]["ext"][0] / 2)
         pan = float(np.clip(x / span * 0.5, -0.6, 0.6))

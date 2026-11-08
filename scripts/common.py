@@ -174,9 +174,9 @@ class Extruded:
 
     kind = "extruded"
 
-    def __init__(self, ax, ay, h, notch=0.10, fat=0.10, seed_phase=0.6):
+    def __init__(self, ax, ay, h, notch=0.10, fat=0.10, seed_phase=0.6, wobble=0.0):
         self.ax, self.ay, self.h = ax, ay, h
-        self.notch, self.fat, self.ph = notch, fat, seed_phase
+        self.notch, self.fat, self.ph, self.wobble = notch, fat, seed_phase, wobble
 
     def radius(self, th):
         th = np.asarray(th, float)
@@ -191,30 +191,39 @@ class Extruded:
         r = self.radius(th)
         return np.stack([r * np.cos(th), r * np.sin(th)], 1)
 
+    def rel(self, x, y):
+        """0 at the centre, 1 on the outline."""
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        return np.hypot(x, y) / self.radius(np.arctan2(y, x))
+
+    def top(self, x, y):
+        """Organic thickness: gentle swells, thinner rounded edge (real meat is not a slab)."""
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        u, v = x / self.ax, y / self.ay
+        swell = 1 + self.wobble * (0.6 * np.sin(2.3 * u + 1.1) * np.sin(1.9 * v + 0.4)
+                                   + 0.4 * np.sin(4.1 * u - 3.3 * v + 0.7))
+        r = np.clip(self.rel(x, y), 0, 1)
+        edge = 1 - 0.28 * np.clip((r - 0.82) / 0.18, 0, 1) ** 2
+        return self.h * swell * edge
+
     def inside(self, x, y, z):
         x, y, z = np.asarray(x, float), np.asarray(y, float), np.asarray(z, float)
-        th = np.arctan2(y, x)
-        return (np.hypot(x, y) <= self.radius(th)) & (z >= 0) & (z <= self.h)
+        return (self.rel(x, y) <= 1) & (z >= 0) & (z <= self.top(x, y))
 
     def is_fat(self, x, y, z):
-        """Fat rim along the outline + thin marbling veins (deterministic)."""
-        th = np.arctan2(y, x)
-        rel = np.hypot(x, y) / self.radius(th)
-        # sparse marbling: hashed fat specks (~5 %), clumped by a coarse modulation
-        h = np.sin(x * 12.9898e3 + y * 78.233e3 + z * 37.719e3) * 43758.5453
-        h = h - np.floor(h)
-        clump = 0.5 + 0.5 * np.sin(31 * x / self.ax + 3.0) * np.sin(23 * y / self.ay + 1.0)
-        speck = h < 0.02 + 0.07 * clump
-        return (rel > 1 - self.fat) | (speck & (rel < 0.9))
+        """Fat cap along the outline. Marbling inside the muscle is a 3D shader field
+        evaluated at each cube's original position, so it stays continuous across cuts."""
+        return self.rel(x, y) > 1 - self.fat
 
     def bbox(self):
         o = self.outline(720)
         lo = np.array([o[:, 0].min(), o[:, 1].min(), 0.0])
-        hi = np.array([o[:, 0].max(), o[:, 1].max(), self.h])
+        hi = np.array([o[:, 0].max(), o[:, 1].max(), self.h * (1 + self.wobble) * 1.01])
         return lo, hi
 
 
-STEAK = Extruded(ax=0.105, ay=0.068, h=0.028, fat=0.06)
+# ribeye-like: ~21 x 14 cm, 2.5-3.2 cm thick, thin fat cap
+STEAK = Extruded(ax=0.105, ay=0.068, h=0.027, fat=0.07, wobble=0.12)
 CAKE = Extruded(ax=0.085, ay=0.085, h=0.055, notch=0.0, fat=0.07, seed_phase=0.0)
 
 OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
@@ -307,3 +316,26 @@ def direction_vector(name, step_index, rng):
         raise ValueError(name)
     n = np.asarray(n, float)
     return n / np.linalg.norm(n)
+
+
+def grid_occupancy(shape, lo, ext, n):
+    """Cells of an n[0] x n[1] x n[2] grid that contain part of the shape.
+    A cell is a real piece as soon as any part of the object lies in it, so each cell
+    is tested on a sub-grid (3^3 samples, 2^3 above 3 M cells) rather than only at its
+    centre - otherwise coarse levels would under-count (2 cuts on a steak = 4 pieces)."""
+    lo, ext, n = np.asarray(lo, float), np.asarray(ext, float), np.asarray(n, int)
+    k = 3 if int(np.prod(n)) <= 3_000_000 else 2
+    cell = ext / n
+    offs = (np.arange(k) + 0.5) / k
+    occ = np.zeros(tuple(n), bool)
+    ys = lo[1] + (np.arange(n[1])[:, None] + offs[None, :]).ravel() * cell[1]
+    zs = lo[2] + (np.arange(n[2])[:, None] + offs[None, :]).ravel() * cell[2]
+    Y, Z = np.meshgrid(ys, zs, indexing="ij")
+    for i in range(n[0]):
+        hit = np.zeros((n[1] * k, n[2] * k), bool)
+        for ox in offs:
+            x = lo[0] + (i + ox) * cell[0]
+            hit |= shape.inside(np.full_like(Y, x), Y, Z)
+        occ[i] = hit.reshape(n[1], k, n[2], k).any(axis=(1, 3))
+    centres = [lo[a] + (np.arange(n[a]) + 0.5) * cell[a] for a in range(3)]
+    return occ, centres
