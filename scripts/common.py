@@ -223,7 +223,7 @@ class Extruded:
 
 
 # ribeye-like: ~21 x 14 cm, 2.5-3.2 cm thick, thin fat cap
-STEAK = Extruded(ax=0.105, ay=0.068, h=0.027, fat=0.05, wobble=0.12)
+STEAK = Extruded(ax=0.105, ay=0.068, h=0.027, fat=0.06, wobble=0.12)
 CAKE = Extruded(ax=0.085, ay=0.085, h=0.055, notch=0.0, fat=0.07, seed_phase=0.0)
 
 OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
@@ -266,7 +266,7 @@ MATERIALS = {
         "label": "STEAK",
         "skin_base": (0.92, 0.86, 0.78), "skin_stem": (0.92, 0.86, 0.78),
         "skin_blush": (0.92, 0.86, 0.78), "skin_roughness": 0.45,
-        "flesh": (0.55, 0.012, 0.012), "flesh_deep": (0.40, 0.008, 0.008),
+        "flesh": (0.32, 0.028, 0.032), "flesh_deep": (0.19, 0.012, 0.018),
         "flesh_roughness": 0.35, "flesh_subsurface": 0.15, "fibrous": False,
         "rim": (0.92, 0.86, 0.78), "rim_width": 0.0,
         "separation": 0.10, "pit_strategy": "none",

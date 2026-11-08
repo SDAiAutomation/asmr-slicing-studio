@@ -31,7 +31,9 @@ def extruded_mesh(shape, rings=16, n=200):
     bm = bmesh.new()
     out = shape.outline(n)
     has_top = hasattr(shape, "top")
-    scales = [1.0 - k / rings for k in range(rings)]  # 1 .. ~0.06
+    # ring 0 -> ring 1 is the fat cap (exact width), then the muscle rings inwards
+    inner = 1.0 - shape.fat
+    scales = [1.0, inner] + [inner * (1.0 - k / (rings - 1)) for k in range(1, rings - 1)]
     ring_v = []
     for sc in scales:
         row = []
@@ -48,7 +50,7 @@ def extruded_mesh(shape, rings=16, n=200):
         side = bm.faces.new((bot[i], bot[j], ring_v[0][j], ring_v[0][i]))
         side.material_index, side.smooth = 1, True
     for k in range(rings - 1):
-        fat_ring = scales[k + 1] > 1 - shape.fat
+        fat_ring = k == 0
         for i in range(n):
             j = (i + 1) % n
             q = bm.faces.new((ring_v[k][i], ring_v[k][j], ring_v[k + 1][j], ring_v[k + 1][i]))
@@ -118,17 +120,21 @@ def meat_group(M):
     mn.inputs["Roughness"].default_value = 0.62
     mn.inputs["Distortion"].default_value = 0.8
     L.new(gi.outputs["Vector"], mn.inputs["Vector"])
+    # vein = thin iso-band where the noise crosses 0.5
+    sub = N.new("ShaderNodeMath")
+    sub.operation = "SUBTRACT"
+    sub.inputs[1].default_value = 0.5
+    L.new(mn.outputs["Fac"], sub.inputs[0])
     band = N.new("ShaderNodeMath")
-    band.operation = "PINGPONG"
-    band.inputs[1].default_value = 0.5
-    L.new(mn.outputs["Fac"], band.inputs[0])
+    band.operation = "ABSOLUTE"
+    L.new(sub.outputs[0], band.inputs[0])
     # coarse mask: marbling denser in some areas, absent in others
     mask = N.new("ShaderNodeTexNoise")
     mask.inputs["Scale"].default_value = 4.0
     L.new(gi.outputs["Vector"], mask.inputs["Vector"])
-    mk = B.ramp(g, [(0.42, (0, 0, 0)), (0.62, (1, 1, 1))])
+    mk = B.ramp(g, [(0.30, (0.15, 0.15, 0.15)), (0.60, (1, 1, 1))])
     L.new(mask.outputs["Fac"], mk.inputs["Fac"])
-    vr = B.ramp(g, [(0.0, (1, 1, 1)), (0.035, (0, 0, 0))])
+    vr = B.ramp(g, [(0.0, (1, 1, 1)), (0.012, (1, 1, 1)), (0.03, (0, 0, 0))])
     L.new(band.outputs[0], vr.inputs["Fac"])
     vm = N.new("ShaderNodeMath")
     vm.operation = "MULTIPLY"
@@ -140,7 +146,7 @@ def meat_group(M):
     L.new(vm.outputs[0], [x for x in fins if x.type == "VALUE"][0])
     fa, fb = [x for x in fins if x.type == "RGBA"][:2]
     L.new(mout, fa)
-    fb.default_value = (0.86, 0.78, 0.70, 1)
+    fb.default_value = (0.80, 0.70, 0.58, 1)
     L.new([x for x in fat.outputs if x.enabled and x.type == "RGBA"][0], go.inputs["Color"])
     # wet, uneven sheen: rougher where there is fat
     rg = N.new("ShaderNodeMath")
@@ -191,7 +197,7 @@ def fat_mat(M):
     nz = nt.nodes.new("ShaderNodeTexNoise")
     B.set_input(nz, "Scale", 40.0)
     L.new(tc.outputs["Object"], nz.inputs["Vector"])
-    r = B.ramp(nt, [(0.35, (0.80, 0.70, 0.58)), (0.65, (0.93, 0.87, 0.78))])
+    r = B.ramp(nt, [(0.35, (0.72, 0.60, 0.45)), (0.65, (0.85, 0.75, 0.60))])
     L.new(nz.outputs["Fac"], r.inputs["Fac"])
     L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
     B.set_input(bsdf, "Roughness", 0.5)
@@ -278,7 +284,7 @@ def cube_mat(M, steak):
         m, f, a, b, o = B.mix_rgb(nt)
         L.new(kind.outputs["Fac"], f)
         L.new(link.from_socket, a)
-        b.default_value = (0.90, 0.83, 0.74, 1)
+        b.default_value = (0.82, 0.72, 0.57, 1)
         L.new(o, bsdf.inputs["Base Color"])
     else:
         r = B.ramp(nt, [(0.0, M["flesh"]), (1.0, M["skin_base"])])
