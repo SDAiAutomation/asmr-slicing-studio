@@ -1,5 +1,9 @@
 name: Render ASMR video
 
+# 3 étapes : prepare (tests, plan, audio, scène Blender, previews)
+#            -> render (N machines en parallèle, chacune une tranche de frames)
+#            -> finalize (assemblage MP4, Google Drive, historique)
+
 on:
   workflow_dispatch:
     inputs:
@@ -24,9 +28,9 @@ on:
       random_seed:
         description: "Seed (vide = aléatoire)"
         default: "42"
-      blender_series:
-        description: "Série Blender (ex. 4.5, 4.2)"
-        default: "4.5"
+      frames_per_machine:
+        description: "Frames par machine (moins = plus de machines en parallèle, max 16)"
+        default: "40"
 
 permissions:
   contents: write
@@ -37,65 +41,29 @@ concurrency:
 
 env:
   DRIVE_FOLDER_ID: "1iyVCJ4oT4RdsRtiQWIOpO9P48u0gEzd7"   # Google Drive > ASMR Slicing Videos
+  BLENDER_SERIES: "4.5"
 
 jobs:
-  render:
+  prepare:
     runs-on: ubuntu-latest
-    env:
-      RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
-    timeout-minutes: 330
+    timeout-minutes: 90
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
+      quality: ${{ steps.cfg.outputs.quality }}
+      tag: ${{ steps.cfg.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Python deps + ffmpeg
-        run: |
-          pip install numpy scipy pytest
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libegl1 libxkbcommon0 libsm6 > /dev/null
-
-      - name: Resolve Blender download
-        id: bl
-        run: |
-          S="${{ inputs.blender_series || '4.5' }}"
-          URL="https://download.blender.org/release/Blender${S}/"
-          F=$(curl -fsSL "$URL" | grep -oE "blender-${S}\.[0-9]+-linux-x64\.tar\.xz" | sort -V | tail -1)
-          test -n "$F" || { echo "No Blender build found for $S"; exit 1; }
-          echo "file=$F" >> "$GITHUB_OUTPUT"
-          echo "url=${URL}${F}" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Blender
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: ~/blender
-          key: ${{ steps.bl.outputs.file }}
-
-      - name: Install Blender
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/blender
-          curl -fsSL "${{ steps.bl.outputs.url }}" | tar -xJ -C ~/blender --strip-components=1
-
-      - name: Tools check
-        run: |
-          echo "BLENDER_PATH=$HOME/blender/blender" >> "$GITHUB_ENV"
-          BLENDER_PATH=$HOME/blender/blender python scripts/run.py check
-
+      - uses: ./.github/actions/setup-blender
       - name: Tests (incl. real Blender geometry, 15 pieces)
         run: python -m pytest tests -q
 
       - name: Config
+        id: cfg
         env:
           CONFIG_JSON: ${{ inputs.config_json }}
-          CAPTION: ${{ inputs.caption }}
         run: |
           python - <<'EOF'
-          import json, random, datetime, os
-          event = os.environ["GITHUB_EVENT_NAME"]
-          base = {"render_engine": "cycles", "cycles_samples": 48, "output_path": "runs"}
+          import json, random, os
           raw = os.environ.get("CONFIG_JSON", "").strip()
           if raw:
               cfg = json.loads(raw)
@@ -110,75 +78,130 @@ jobs:
               }
               quality = "${{ inputs.quality || 'preview' }}"
           n = cfg["target_piece_count"]
-          base["cycles_samples"] = 48 if n <= 500 else (32 if n <= 5000 else 20)
-          cfg.update(base)
+          cfg.update({"render_engine": "cycles", "output_path": "runs",
+                      "cycles_samples": 48 if n <= 500 else (32 if n <= 5000 else 20)})
           json.dump(cfg, open("ci_config.json", "w"), indent=1)
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"QUALITY={quality}\n")
-              f.write(f"VIDEO_TAG={cfg['object_type']}-{cfg['target_piece_count']}p\n")
-          open("caption.txt", "w", encoding="utf-8").write(os.environ.get("CAPTION", ""))
+          tag = f"{cfg['object_type']}-{n}p"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"quality={quality}\ntag={tag}\n")
           print(cfg, quality)
           EOF
 
-      - name: Preview (plan + audio + Blender scene + stills)
-        run: python scripts/run.py preview ci_config.json
-
-      - name: Render frames
+      - name: Plan + audio + Blender scene + previews
+        env:
+          CAPTION: ${{ inputs.caption }}
         run: |
-          RD=$(ls -d runs/*/ | head -1)
-          echo "RUN_DIR=$RD" >> "$GITHUB_ENV"
-          if [ "$QUALITY" = "final" ]; then
-            python scripts/run.py render "$RD" --final
-          else
-            python scripts/run.py render "$RD"
-          fi
+          python scripts/run.py preview ci_config.json
+          mv runs/*/ work
+          cp ci_config.json work/ci_config.json
+          printf '%s' "$CAPTION" > work/caption.txt
+
+      - name: Split frames across machines
+        id: shards
+        run: echo "list=$(python scripts/run.py shards work ${{ inputs.frames_per_machine || '40' }})" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workdir
+          path: work/
+          retention-days: 2
+
+  render:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: true
+      matrix:
+        frames: ${{ fromJSON(needs.prepare.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-blender
+      - uses: actions/download-artifact@v4
+        with:
+          name: workdir
+          path: work
+      - name: Render frames ${{ matrix.frames }}
+        run: |
+          if [ "${{ needs.prepare.outputs.quality }}" = "final" ]; then F=--final; else F=; fi
+          python scripts/run.py render work $F --frames ${{ matrix.frames }}
+      - name: Shard id
+        id: sid
+        run: echo "id=$(echo '${{ matrix.frames }}' | tr '-' '_')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ steps.sid.outputs.id }}
+          path: work/frames/*.png
+          retention-days: 2
+
+  finalize:
+    needs: [prepare, render]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+      VIDEO_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Deps
+        run: |
+          pip install -q numpy scipy
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          name: workdir
+          path: work
+      - uses: actions/download-artifact@v4
+        if: needs.render.result == 'success'
+        with:
+          pattern: frames-*
+          path: work/frames
+          merge-multiple: true
 
       - name: Export MP4
-        run: |
-          python scripts/run.py export "$RUN_DIR"
-          cp caption.txt "$RUN_DIR"caption.txt
+        if: needs.render.result == 'success'
+        run: python scripts/run.py export work
 
       - name: Upload MP4 to Google Drive
-        if: ${{ env.RCLONE_CONF != '' }}
+        if: needs.render.result == 'success' && env.RCLONE_CONF != ''
         run: |
           sudo apt-get install -y -qq rclone > /dev/null
           mkdir -p ~/.config/rclone
           printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
           REMOTE=$(rclone listremotes | head -1)
-          D=$(date -u +%Y-%m-%d)
-          for f in "$RUN_DIR"*.mp4; do
-            NAME="${D}_${VIDEO_TAG}_run${GITHUB_RUN_NUMBER}"
-            rclone copyto "$f" "${REMOTE}${NAME}.mp4" --drive-root-folder-id "$DRIVE_FOLDER_ID"
-            if [ -s "$RUN_DIR"caption.txt ]; then
-              rclone copyto "$RUN_DIR"caption.txt "${REMOTE}${NAME}_caption.txt" --drive-root-folder-id "$DRIVE_FOLDER_ID"
-            fi
-            echo "Uploaded ${NAME} to Google Drive folder $DRIVE_FOLDER_ID"
-          done
+          NAME="$(date -u +%Y-%m-%d)_${VIDEO_TAG}_run${GITHUB_RUN_NUMBER}"
+          rclone copyto work/*.mp4 "${REMOTE}${NAME}.mp4" --drive-root-folder-id "$DRIVE_FOLDER_ID"
+          if [ -s work/caption.txt ]; then
+            rclone copyto work/caption.txt "${REMOTE}${NAME}_caption.txt" --drive-root-folder-id "$DRIVE_FOLDER_ID"
+          fi
+          echo "Uploaded ${NAME} to Google Drive"
 
       - name: Drive upload skipped
-        if: ${{ env.RCLONE_CONF == '' }}
+        if: env.RCLONE_CONF == ''
         run: echo "::warning::Secret RCLONE_CONF absent - MP4 disponible uniquement dans les Artifacts du run."
 
       - name: Record in history (used by the daily planner to avoid repeats)
         if: always()
         run: |
           python - <<'EOF'
-          import json, os, glob, datetime
-          rd = os.environ.get("RUN_DIR", "")
+          import json, os, datetime
           def load(name):
               try:
-                  return json.load(open(os.path.join(rd, name)))
+                  return json.load(open(os.path.join("work", name)))
               except Exception:
                   return {}
-          cfg = json.load(open("ci_config.json"))
-          rep, exp = load("blender_report.json"), load("export_report.json")
+          cfg, rep, exp = load("ci_config.json"), load("blender_report.json"), load("export_report.json")
+          cap = open("work/caption.txt", encoding="utf-8").read() if os.path.exists("work/caption.txt") else ""
           row = {"date": datetime.datetime.utcnow().isoformat(timespec="minutes") + "Z",
                  "run": int(os.environ["GITHUB_RUN_ID"]), "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
                  "status": "ok" if exp.get("ok") else "failed",
                  "object": cfg.get("object_type"), "pieces": cfg.get("target_piece_count"),
                  "mode": cfg.get("cutting_mode"), "seed": cfg.get("random_seed"),
-                 "hook": cfg.get("hook_text", ""), "end_text": cfg.get("end_text", ""),
-                 "caption": open("caption.txt", encoding="utf-8").read() if os.path.exists("caption.txt") else "",
+                 "hook": cfg.get("hook_text", ""), "end_text": cfg.get("end_text", ""), "caption": cap,
                  "validated_pieces": rep.get("final_pieces_validated"),
                  "duration_s": exp.get("duration_s"), "size_mb": exp.get("size_mb"),
                  "views": None, "likes": None, "comments": None}
@@ -193,16 +216,16 @@ jobs:
           git commit -m "history: run ${GITHUB_RUN_NUMBER} (${VIDEO_TAG})" || exit 0
           for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 5; done
 
-      - name: Upload video + previews + reports
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: asmr-${{ env.VIDEO_TAG }}-${{ github.run_number }}
+          name: asmr-${{ needs.prepare.outputs.tag }}-${{ github.run_number }}
           path: |
-            runs/*/*.mp4
-            runs/*/previews/
-            runs/*/*.json
-            runs/*/soundtrack.wav
-            runs/*/blender.log
+            work/*.mp4
+            work/previews/
+            work/*.json
+            work/caption.txt
+            work/soundtrack.wav
+            work/blender.log
           if-no-files-found: warn
           retention-days: 14

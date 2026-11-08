@@ -154,8 +154,10 @@ def cmd_preview(config_path):
     return rd
 
 
-def cmd_render(rd, final):
+def cmd_render(rd, final, frames=None):
     a = ["--out", rd, "--stage", "render"] + (["--final"] if final else [])
+    if frames:
+        a += ["--frames", frames]
     frames_dir = os.path.join(rd, "frames")
     # resume: drop empty/corrupt PNGs so Blender re-renders them
     for p in glob.glob(os.path.join(frames_dir, "*.png")):
@@ -255,7 +257,16 @@ def main():
     if c == "preview":
         cmd_preview(sys.argv[2])
     elif c == "render":
-        cmd_render(sys.argv[2], final)
+        fr = sys.argv[sys.argv.index("--frames") + 1] if "--frames" in sys.argv else None
+        cmd_render(sys.argv[2], final, fr)
+    elif c == "shards":
+        # print a JSON list of frame ranges for parallel rendering
+        with open(os.path.join(sys.argv[2], "plan.json"), encoding="utf-8") as f:
+            total = json.load(f)["total_frames"]
+        per = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+        n = max(1, min(16, -(-total // per)))
+        step = -(-total // n)
+        print(json.dumps([f"{s}-{min(total, s + step - 1)}" for s in range(1, total + 1, step)]))
     elif c == "export":
         cmd_export(sys.argv[2])
     elif c == "all":

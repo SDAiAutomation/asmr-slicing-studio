@@ -1,0 +1,41 @@
+name: Setup Blender + Python + FFmpeg
+description: Installs Python deps, FFmpeg and a cached Blender build, exports BLENDER_PATH
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Python deps + system libs
+      shell: bash
+      run: |
+        pip install -q numpy scipy pytest
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq ffmpeg libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libegl1 libxkbcommon0 libsm6 > /dev/null
+    - name: Resolve Blender download
+      id: bl
+      shell: bash
+      run: |
+        S="${BLENDER_SERIES:-4.5}"
+        URL="https://download.blender.org/release/Blender${S}/"
+        F=$(curl -fsSL "$URL" | grep -oE "blender-${S}\.[0-9]+-linux-x64\.tar\.xz" | sort -V | tail -1)
+        test -n "$F" || { echo "No Blender build found for $S"; exit 1; }
+        echo "file=$F" >> "$GITHUB_OUTPUT"
+        echo "url=${URL}${F}" >> "$GITHUB_OUTPUT"
+    - name: Cache Blender
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/blender
+        key: ${{ steps.bl.outputs.file }}
+    - name: Install Blender
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/blender
+        curl -fsSL "${{ steps.bl.outputs.url }}" | tar -xJ -C ~/blender --strip-components=1
+    - name: Export BLENDER_PATH
+      shell: bash
+      run: |
+        echo "BLENDER_PATH=$HOME/blender/blender" >> "$GITHUB_ENV"
+        "$HOME/blender/blender" --version | head -1

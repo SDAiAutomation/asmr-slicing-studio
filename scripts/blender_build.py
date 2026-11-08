@@ -704,14 +704,22 @@ def setup_render(scn, cfg, out_dir, final):
     eng = cfg["render_engine"]
     if eng == "cycles":
         scn.render.engine = "CYCLES"
-        scn.cycles.samples = cfg["cycles_samples"] if final else 16
-        scn.cycles.use_denoising = True
-        scn.cycles.device = "CPU"
-        scn.cycles.max_bounces = 6
+        c = scn.cycles
+        c.device = "CPU"
+        c.samples = cfg["cycles_samples"] if final else 12
+        c.use_adaptive_sampling = True
+        c.adaptive_threshold = 0.04 if final else 0.08
+        c.use_denoising = True
         try:
-            scn.cycles.denoiser = "OPENIMAGEDENOISE"
+            c.denoiser = "OPENIMAGEDENOISE"
         except TypeError:
             pass
+        # small studio scene: few bounces are enough, caustics never matter here
+        c.max_bounces = 4
+        c.diffuse_bounces, c.glossy_bounces = 2, 2
+        c.transmission_bounces, c.transparent_max_bounces = 2, 4
+        c.caustics_reflective = c.caustics_refractive = False
+        scn.render.use_persistent_data = True  # keep BVH/shaders between frames
     else:
         for name in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"):
             try:
@@ -785,7 +793,10 @@ def main():
                                            if k not in ("hits", "counter_events")}))
     elif a["stage"] == "render":
         scn = bpy.context.scene
-        with open(scn["asmr_plan"], encoding="utf-8") as f:
+        plan_path = os.path.join(out_dir, "plan.json")  # run dirs move between CI jobs
+        if not os.path.exists(plan_path):
+            plan_path = scn["asmr_plan"]
+        with open(plan_path, encoding="utf-8") as f:
             cfg = json.load(f)["config"]
         setup_render(scn, cfg, out_dir, final=a["final"])
         if a.get("frames"):
