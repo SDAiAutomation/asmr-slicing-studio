@@ -213,7 +213,8 @@ class Extruded:
     def is_fat(self, x, y, z):
         """Fat cap along the outline. Marbling inside the muscle is a 3D shader field
         evaluated at each cube's original position, so it stays continuous across cuts."""
-        return self.rel(x, y) > 1 - self.fat
+        # a cube is drawn as fat only when its centre lies in the outer half of the cap
+        return self.rel(x, y) > 1 - 0.55 * self.fat
 
     def bbox(self):
         o = self.outline(720)
