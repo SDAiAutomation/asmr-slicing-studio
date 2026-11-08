@@ -199,11 +199,11 @@ def wood_mat():
     L = nt.links
     tc = nt.nodes.new("ShaderNodeTexCoord")
     wave = nt.nodes.new("ShaderNodeTexWave")
-    set_input(wave, "Scale", 9.0)
-    set_input(wave, "Distortion", 9.0)
+    set_input(wave, "Scale", 4.0)
+    set_input(wave, "Distortion", 3.0)
     set_input(wave, "Detail", 6.0)
     L.new(tc.outputs["Object"], wave.inputs["Vector"])
-    r = ramp(nt, [(0.0, (0.33, 0.17, 0.07)), (1.0, (0.55, 0.32, 0.14))])
+    r = ramp(nt, [(0.0, (0.30, 0.16, 0.07)), (1.0, (0.42, 0.24, 0.11))])
     L.new(wave.outputs["Fac"], r.inputs["Fac"])
     L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
     set_input(bsdf, "Roughness", 0.55)
@@ -381,7 +381,7 @@ def setup_environment(scn, board_size=(0.46, 0.34)):
     scn.world = world
     world.use_nodes = True
     world.node_tree.nodes["Background"].inputs[0].default_value = (0.012, 0.013, 0.016, 1)
-    world.node_tree.nodes["Background"].inputs[1].default_value = 0.6
+    world.node_tree.nodes["Background"].inputs[1].default_value = 0.25
 
     def area(name, loc, power, size, color=(1, 0.97, 0.92)):
         ld = bpy.data.lights.new(name, "AREA")
@@ -393,9 +393,10 @@ def setup_environment(scn, board_size=(0.46, 0.34)):
         ob.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
         return ob
 
-    area("Key", (-0.45, -0.35, 0.55), 55, 0.45)
-    area("Fill", (0.55, -0.45, 0.30), 14, 0.6, (0.85, 0.9, 1.0))
-    area("Rim", (0.10, 0.60, 0.45), 40, 0.35)
+    # moody studio: one soft key, a weak cool fill, a rim light for the edges
+    area("Key", (-0.45, -0.35, 0.55), 16, 0.45)
+    area("Fill", (0.55, -0.45, 0.30), 3, 0.6, (0.85, 0.9, 1.0))
+    area("Rim", (0.10, 0.60, 0.45), 12, 0.35)
     return board
 
 
@@ -664,6 +665,7 @@ def text_obj(name, body, size, loc, parent, mat, align="CENTER"):
     cu.size = size
     cu.align_x = align
     cu.align_y = "CENTER"
+    cu.offset = size * 0.03  # heavier strokes: readable on a phone
     ob = bpy.data.objects.new(name, cu)
     ob.data.materials.append(mat)
     bpy.context.scene.collection.objects.link(ob)

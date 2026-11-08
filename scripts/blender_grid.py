@@ -38,7 +38,7 @@ def extruded_mesh(shape):
     for i in range(n):
         j = (i + 1) % n
         side = bm.faces.new((b[i], b[j], t[j], t[i]))
-        side.material_index, side.smooth = 0, True
+        side.material_index, side.smooth = 1, True
         ring = bm.faces.new((t[i], t[j], ti[j], ti[i]))
         ring.material_index = 0
     top = bm.faces.new(ti)
@@ -63,7 +63,7 @@ def meat_mat(M):
     L = nt.links
     tc = nt.nodes.new("ShaderNodeTexCoord")
     noise = nt.nodes.new("ShaderNodeTexNoise")
-    B.set_input(noise, "Scale", 22.0)
+    B.set_input(noise, "Scale", 14.0)
     B.set_input(noise, "Detail", 6.0)
     L.new(tc.outputs["Object"], noise.inputs["Vector"])
     # thin white marbling veins: narrow band of the noise field
@@ -71,7 +71,7 @@ def meat_mat(M):
     band.operation = "PINGPONG"
     band.inputs[1].default_value = 0.08
     L.new(noise.outputs["Fac"], band.inputs[0])
-    vr = B.ramp(nt, [(0.0, (1, 1, 1)), (0.018, (0, 0, 0))])
+    vr = B.ramp(nt, [(0.0, (1, 1, 1)), (0.006, (0, 0, 0))])
     L.new(band.outputs[0], vr.inputs["Fac"])
     m, f, a, b, o = B.mix_rgb(nt)
     L.new(vr.outputs["Color"], f)
@@ -194,16 +194,14 @@ def collapse_group(mat):
     dz = m("MULTIPLY", m("MULTIPLY", col, -1.0), m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.22, 0.62)))
     # ...and the upper ones slide outwards
     rel = m("DIVIDE", sep.outputs["Z"], m("MAXIMUM", H, 1e-4))
-    spread = m("MULTIPLY", m("MULTIPLY", col, H), m("MULTIPLY", m("ADD", rel, 0.25), m("MULTIPLY_ADD", rv, 1.6, 0.6)))
+    # outward expansion proportional to the distance from the centre (pile widens ~10-25 %)
+    spread = m("MULTIPLY", col, m("MULTIPLY", m("ADD", rel, 0.3), m("MULTIPLY_ADD", rv, 0.18, 0.06)))
     xy = N.new("ShaderNodeCombineXYZ")
     L.new(sep.outputs["X"], xy.inputs[0])
     L.new(sep.outputs["Y"], xy.inputs[1])
-    nrm = N.new("ShaderNodeVectorMath")
-    nrm.operation = "NORMALIZE"
-    L.new(xy.outputs[0], nrm.inputs[0])
     sc = N.new("ShaderNodeVectorMath")
     sc.operation = "SCALE"
-    L.new(nrm.outputs[0], sc.inputs[0])
+    L.new(xy.outputs[0], sc.inputs[0])
     L.new(spread, sc.inputs["Scale"])
     vz = N.new("ShaderNodeCombineXYZ")
     L.new(dz, vz.inputs[2])
@@ -346,7 +344,7 @@ def build_grid_scene(plan, out_dir):
     cuts_ev = [(c[0], c[1], lvl_cuts.get(c[2])) for c in plan["counters"]["cuts"]]
     pieces_ev = [(c[0], c[1]) for c in plan["counters"]["pieces"]]
     height = float(hi[2] - lo[2])
-    park = Vector((span * 0.9, -0.12, 0.25))
+    park = Vector((span * 1.6, -0.05, 0.35))   # outside the frame
     B.interp("BEZIER")
     knife.location = park
     knife.rotation_quaternion = B.blade_quat((0, 1, 0), (0, 0, -1))

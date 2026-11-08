@@ -211,7 +211,7 @@ class Extruded:
         return lo, hi
 
 
-STEAK = Extruded(ax=0.105, ay=0.068, h=0.028)
+STEAK = Extruded(ax=0.105, ay=0.068, h=0.028, fat=0.06)
 CAKE = Extruded(ax=0.085, ay=0.085, h=0.055, notch=0.0, fat=0.07, seed_phase=0.0)
 
 OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
@@ -254,7 +254,7 @@ MATERIALS = {
         "label": "STEAK",
         "skin_base": (0.92, 0.86, 0.78), "skin_stem": (0.92, 0.86, 0.78),
         "skin_blush": (0.92, 0.86, 0.78), "skin_roughness": 0.45,
-        "flesh": (0.62, 0.035, 0.03), "flesh_deep": (0.48, 0.02, 0.02),
+        "flesh": (0.55, 0.012, 0.012), "flesh_deep": (0.40, 0.008, 0.008),
         "flesh_roughness": 0.35, "flesh_subsurface": 0.15, "fibrous": False,
         "rim": (0.92, 0.86, 0.78), "rim_width": 0.0,
         "separation": 0.10, "pit_strategy": "none",
