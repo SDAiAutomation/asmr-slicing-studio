@@ -508,12 +508,15 @@ def build_scene(plan, out_dir):
     animate_knife(knife, plan, pieces, keys_of)
     cam = build_camera(plan, cfg)
     cuts_events, done = [], {}
+    per_level = {}
+    for h in plan["hits"]:
+        per_level[h["level"]] = per_level.get(h["level"], 0) + 1
     for p_ in plan["pieces"]:
         if p_["parent"] is None:
-            cuts_events.append((p_["born_frame"] if p_["level"] else 1, 0))
+            cuts_events.append((p_["born_frame"] if p_["level"] else 1, 0, per_level.get(p_["level"])))
     for h in plan["hits"]:
         done[h["level"]] = done.get(h["level"], 0) + 1
-        cuts_events.append((h["exit_frame"], done[h["level"]]))
+        cuts_events.append((h["exit_frame"], done[h["level"]], per_level[h["level"]]))
     build_overlay(cam, cfg, cuts_events, counter_events, plan["total_frames"])
     setup_render(scn, cfg, out_dir, final=False)
     report["build_seconds"] = round(time.time() - t0, 2)
@@ -674,13 +677,15 @@ def _fmt(n):
 
 
 def _counter(cam, name, events, size, y, D, mat):
+    """events: (frame, value) or (frame, value, total) -> shows "value / total"."""
     per_frame = {}
-    for f, c in sorted(events, key=lambda e: e[0]):
-        per_frame[max(1, int(f))] = c  # last value reached in that frame
+    for e in sorted(events, key=lambda e: e[0]):
+        per_frame[max(1, int(e[0]))] = e[1:]  # last value reached in that frame
     ev = sorted(per_frame.items())
-    for i, (f, c) in enumerate(ev):
+    for i, (f, v) in enumerate(ev):
         nxt = ev[i + 1][0] if i + 1 < len(ev) else None
-        ob = text_obj(f"{name}_{i:05d}", _fmt(c), size, (0, y, -D), cam, mat)
+        body = _fmt(v[0]) if len(v) == 1 or v[1] is None else f"{_fmt(v[0])} / {_fmt(v[1])}"
+        ob = text_obj(f"{name}_{i:05d}", body, size, (0, y, -D), cam, mat)
         set_visibility(ob, f, nxt)
 
 

@@ -8,7 +8,8 @@ Chaque jour, la tâche planifiée Claude décide **une** vidéo, la lance sur Gi
 
 ## Formats
 - **`grid` (format principal, ~5 jours sur 7)** : niveaux "N CUTS -> X CUBES". Un objet neuf par niveau, des coupes en grille qui augmentent, puis effondrement en cubes. Compteurs CUTS (haut) et CUBES (bas), exacts. Clés : `format: "grid"`, `cuts_sequence` (ex. [4, 10, 25, 60, 160, 400, 1000]), objet `steak` (validé en priorité), `cake`, `mango`. Jusqu'à ~1 000 coupes (≈ 12 millions de cubes) ; garder la vidéo entre 35 et 70 s (6 à 12 niveaux).
-- **`slices`** : découpe progressive en morceaux (2 → 25 000), compteurs CUTS et PIECES. Pour varier.
+- **`slices`** : découpe progressive en morceaux, compteurs CUTS et PIECES. Pour varier. Toujours en `cutting_mode: "levels"` : chaque niveau repart de l'objet intact (c'est la règle des formats qui marchent), `progression_sequence` = nombre de morceaux par niveau (ex. [2, 5, 15, 50, 200, 1000]).
+- Règle commune : chaque niveau repart toujours de la forme initiale ; le compteur du haut affiche « coupes faites / coupes du niveau ».
 
 ## Leviers d'engagement (choisir 1 angle principal par jour)
 1. **Nombre absurde** : 1 000, 5 000, 10 000, 25 000 morceaux. Le compteur est le héros. Hook du type "Can it reach 25,000 pieces?".

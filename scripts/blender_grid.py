@@ -322,7 +322,8 @@ def build_grid_scene(plan, out_dir):
                 sock.default_value = float(value)
                 sock.keyframe_insert("default_value", frame=frame)
 
-    cuts_ev = [(c[0], c[1]) for c in plan["counters"]["cuts"]]
+    lvl_cuts = {l["level"]: l["cuts"] for l in plan["levels"]}
+    cuts_ev = [(c[0], c[1], lvl_cuts.get(c[2])) for c in plan["counters"]["cuts"]]
     pieces_ev = [(c[0], c[1]) for c in plan["counters"]["pieces"]]
     height = float(hi[2] - lo[2])
     park = Vector((span * 0.9, -0.12, 0.25))
@@ -337,7 +338,7 @@ def build_grid_scene(plan, out_dir):
         li = lvl["level"]
         cell = lvl["cell_size"]
         start, enter = lvl["start_frame"], lvl["enter_frames"]
-        cuts_ev.append((start, 0))
+        cuts_ev.append((start, 0, lvl["cuts"]))
         pieces_ev.append((start, 1))
         # seam parameters for this level (constant until the next level)
         for ax in range(3):
