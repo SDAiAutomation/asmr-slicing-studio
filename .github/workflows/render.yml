@@ -179,6 +179,10 @@ jobs:
           if [ -s work/caption.txt ]; then
             rclone copyto work/caption.txt "${REMOTE}${NAME}_caption.txt" --drive-root-folder-id "$DRIVE_FOLDER_ID"
           fi
+          # small previews for review (contact sheet + key stills) in a sub-folder
+          for img in work/previews/0*.png; do
+            [ -f "$img" ] && rclone copyto "$img" "${REMOTE}_previews/${NAME}_$(basename "$img")" --drive-root-folder-id "$DRIVE_FOLDER_ID"
+          done
           echo "Uploaded ${NAME} to Google Drive"
           echo "DRIVE_OK=1" >> "$GITHUB_ENV"
 
