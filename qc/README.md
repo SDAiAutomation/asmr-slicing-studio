@@ -37,11 +37,16 @@ tombe (CONFORME / NON CONFORME…). Vidéo de ~60 s : 2 manches + explication + 
   }],
   "explain": {"title": "…", "lines": ["…", "…", "…"]},
   "source": ["Valeurs : …", "…"], "cta": "PROCHAIN TEST ? Écris l'objet ↓",
+  "decimal": "." (anglais) | "," (défaut), "replay_label": "SLOW-MO",
   "caption": "…", "sources_detail": ["calcul…"]
 }
 ```
 Le passage `explain` montre aujourd'hui une poutre en béton armé (épisode béton). Pour un autre
 objet, il faudra ajouter sa scène d'explication dans `engine.html` (`mode 2`).
+
+## Langue et texte
+- Version par défaut pour un public large : **anglais, texte minimal** (`concrete_c30_37_en.json`). Les chiffres, la jauge, les ✓/✗ et le tampon portent l'histoire ; 6 mots max par ligne.
+- Chaque casse est rejouée au ralenti (gros plan, ×0,3) avant le tampon : `D.replay` / `RP` dans `engine.html`.
 
 ## Local
 ```bash
