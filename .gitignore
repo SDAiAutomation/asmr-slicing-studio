@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 scripts/_bench_*.json
 assets/cache/
+node_modules/

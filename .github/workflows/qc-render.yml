@@ -1,0 +1,200 @@
+name: Render Contrôle Qualité video
+
+# Format "Contrôle Qualité" (presse / traction, vraies valeurs sourcées) - moteur qc/engine.html.
+# prepare (timeline + découpage) -> render (N machines, une tranche de frames chacune)
+# -> finalize (son, MP4, Google Drive, historique)
+
+on:
+  workflow_dispatch:
+    inputs:
+      config_path:
+        description: "Config du test (dans le dépôt)"
+        default: "assets/configs/qc/beton_c30_37.json"
+      config_json:
+        description: "Ou config complète en JSON (prioritaire) - utilisé par la tâche quotidienne Claude"
+        default: ""
+      frames_per_machine:
+        description: "Frames par machine (moins = plus de machines en parallèle)"
+        default: "160"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: qc-render-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DRIVE_FOLDER_ID: "1iyVCJ4oT4RdsRtiQWIOpO9P48u0gEzd7"   # même dossier Drive que les vidéos ASMR, sous-dossier Controle_Qualite
+  PLAYWRIGHT_VERSION: "1.50.1"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
+      tag: ${{ steps.shards.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Playwright + Chromium
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION}
+          npx playwright install --with-deps chromium
+      - name: Config
+        env:
+          CONFIG_JSON: ${{ inputs.config_json }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+        run: |
+          mkdir -p work
+          if [ -n "$CONFIG_JSON" ]; then printf '%s' "$CONFIG_JSON" > work/config.json; else cp "$CONFIG_PATH" work/config.json; fi
+          python3 -c "import json;c=json.load(open('work/config.json'));assert c.get('source'), 'config sans source : refusé (chaque chiffre doit être sourcé)'"
+      - name: Timeline + stills
+        run: |
+          node qc/render.js timeline work/config.json work/timeline.json
+          python3 - <<'EOF'
+          import json
+          tl = json.load(open("work/timeline.json"))
+          ts = [1.5] + [e["t"] + 0.6 for e in tl["events"] if e["type"] == "break"] + [tl["duration"] - 2.5]
+          open("work/stills.txt", "w").write(",".join(f"{t:.2f}" for t in ts))
+          EOF
+          node qc/render.js stills work/config.json work/previews "$(cat work/stills.txt)"
+      - name: Split frames across machines
+        id: shards
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          tl = json.load(open("work/timeline.json")); n = tl["frames"]; per = int("${{ inputs.frames_per_machine || '160' }}")
+          cfg = json.load(open("work/config.json"))
+          print("list=" + json.dumps([f"{a}-{min(a + per, n) - 1}" for a in range(0, n, per)]))
+          print("tag=" + cfg.get("id", "qc"))
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qc-work
+          path: work/
+          retention-days: 1
+
+  render:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: true
+      matrix:
+        frames: ${{ fromJSON(needs.prepare.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Playwright + Chromium
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION}
+          npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: qc-work
+          path: work
+      - name: Render frames ${{ matrix.frames }}
+        run: node qc/render.js frames work/config.json work/frames ${{ matrix.frames }}
+      - name: Shard id
+        id: sid
+        run: echo "id=$(echo '${{ matrix.frames }}' | tr '-' '_')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qc-frames-${{ steps.sid.outputs.id }}
+          path: work/frames/*.jpg
+          retention-days: 1
+
+  finalize:
+    needs: [prepare, render]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+      VIDEO_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deps
+        run: |
+          pip install -q numpy scipy
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          name: qc-work
+          path: work
+      - uses: actions/download-artifact@v4
+        if: needs.render.result == 'success'
+        with:
+          pattern: qc-frames-*
+          path: work/frames
+          merge-multiple: true
+      - name: Sound + MP4
+        if: needs.render.result == 'success'
+        run: |
+          python3 qc/audio.py work/timeline.json work/audio.wav
+          ffmpeg -v error -y -framerate 30 -i work/frames/f_%05d.jpg -i work/audio.wav \
+            -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest work/video.mp4
+          python3 -c "import json;c=json.load(open('work/config.json'));open('work/caption.txt','w').write(c.get('caption',''))"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 work/video.mp4
+      - name: Upload to Google Drive
+        if: needs.render.result == 'success' && env.RCLONE_CONF != ''
+        run: |
+          sudo apt-get install -y -qq rclone > /dev/null
+          mkdir -p ~/.config/rclone && printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+          REMOTE=$(rclone listremotes | head -1)
+          NAME="$(date -u +%Y-%m-%d)_${VIDEO_TAG}_run${GITHUB_RUN_NUMBER}"
+          rclone copyto work/video.mp4 "${REMOTE}Controle_Qualite/${NAME}.mp4" --drive-root-folder-id "$DRIVE_FOLDER_ID"
+          rclone copyto work/caption.txt "${REMOTE}Controle_Qualite/${NAME}_caption.txt" --drive-root-folder-id "$DRIVE_FOLDER_ID"
+          echo "DRIVE_OK=1" >> "$GITHUB_ENV"
+      - name: Record in history
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, os, datetime, subprocess
+          cfg = json.load(open("work/config.json"))
+          ok = os.path.exists("work/video.mp4")
+          row = {"date": datetime.datetime.utcnow().isoformat(timespec="minutes") + "Z",
+                 "run_number": int(os.environ["GITHUB_RUN_NUMBER"]), "status": "ok" if ok else "failed",
+                 "id": cfg.get("id"), "rounds": [r["specimen"] + ":" + r["kind"] for r in cfg["rounds"]],
+                 "source": cfg.get("source"), "caption": cfg.get("caption", ""),
+                 "views": None, "likes": None, "comments": None, "shares": None}
+          os.makedirs("history", exist_ok=True)
+          with open("history/qc_videos.jsonl", "a", encoding="utf-8") as f:
+              f.write(json.dumps(row, ensure_ascii=False) + "\n")
+          print(row)
+          EOF
+          git config user.name "asmr-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add history/qc_videos.jsonl
+          git commit -m "history: qc run ${GITHUB_RUN_NUMBER} (${VIDEO_TAG})" || exit 0
+          for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 5; done
+      - uses: actions/upload-artifact@v4
+        if: always() && env.DRIVE_OK != '1'
+        with:
+          name: qc-${{ needs.prepare.outputs.tag }}-${{ github.run_number }}-video
+          path: work/video.mp4
+          if-no-files-found: ignore
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qc-${{ needs.prepare.outputs.tag }}-${{ github.run_number }}-previews
+          path: work/previews/
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Delete intermediate artifacts
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+                        --jq '.artifacts[] | select(.name == "qc-work" or (.name | startswith("qc-frames-"))) | .id'); do
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/$id" && echo "deleted $id"
+          done

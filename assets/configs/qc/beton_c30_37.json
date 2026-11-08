@@ -1,0 +1,57 @@
+{
+  "id": "qc-001-beton",
+  "series": "CONTRÔLE QUALITÉ · TEST 001",
+  "hook": ["Un cube de béton de 15 cm", "supporte combien de tonnes ?"],
+  "hook_sub": "Ton estimation en commentaire ↓",
+  "rounds": [
+    {
+      "title": "MANCHE 1 · ON ÉCRASE",
+      "kind": "compression",
+      "specimen": "cube",
+      "material": "concrete",
+      "label": "CHARGE",
+      "unit": "t",
+      "decimals": 0,
+      "gauge_max": 120,
+      "steps": [20, 50, 80],
+      "question_value": 100,
+      "question": "ÇA TIENT À 100 t ?",
+      "question_sub": "Oui ou non : réponds en commentaire ↓",
+      "break_value": 85,
+      "threshold": {"value": 85, "label": "seuil C30/37"},
+      "stamp": {"text": "CONFORME", "color": "green"},
+      "result_chip": "85 t",
+      "fact": ["Classe C30/37 : 37 MPa garantis sur cube", "37 MPa × 15 cm × 15 cm ≈ 85 tonnes"]
+    },
+    {
+      "title": "MANCHE 2 · ON TIRE",
+      "kind": "traction",
+      "specimen": "prism",
+      "material": "concrete",
+      "label": "TRACTION",
+      "unit": "t",
+      "decimals": 1,
+      "gauge_max": 12,
+      "steps": [2, 4, 6],
+      "question_value": 10,
+      "question": "ET EN TIRANT : 10 t ?",
+      "question_sub": "Même béton, même section 15 × 15 cm",
+      "break_value": 6.6,
+      "threshold": null,
+      "stamp": {"text": "13× MOINS", "color": "red"},
+      "result_chip": "6,6 t",
+      "fact": ["Résistance en traction du C30/37 : 2,9 MPa", "2,9 MPa × 15 cm × 15 cm ≈ 6,6 tonnes"]
+    }
+  ],
+  "explain": {
+    "title": "D'OÙ LE BÉTON ARMÉ",
+    "lines": ["Le béton encaisse l'écrasement…", "…mais casse vite quand on le tire.", "Les barres d'acier prennent la traction."]
+  },
+  "source": ["Valeurs : Eurocode 2 (EN 1992-1-1), tableau 3.1 · classe C30/37", "Essai simulé aux valeurs de la norme"],
+  "cta": "PROCHAIN TEST ? Écris l'objet ↓",
+  "caption": "Un cube de béton de 15 cm : écrasé puis tiré 🧱 Tu avais dit combien de tonnes ? Et on teste quoi au prochain ? 👇 #béton #ingénierie #génieCivil #physique #science #contrôlequalité #satisfying #3d",
+  "sources_detail": [
+    "EN 1992-1-1 (Eurocode 2), Table 3.1 : C30/37 -> fck = 30 MPa, fck,cube = 37 MPa, fctm = 2,9 MPa",
+    "Calcul : 37 MPa x 0,0225 m2 = 832 kN = 84,9 t ; 2,9 MPa x 0,0225 m2 = 65,3 kN = 6,65 t"
+  ]
+}
