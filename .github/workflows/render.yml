@@ -81,6 +81,8 @@ jobs:
                 "random_seed": int(seed) if seed else random.randint(1, 10**6),
               }
               quality = "${{ inputs.quality || 'preview' }}"
+          # TikTok only pays (Creator Rewards) for videos over 1 minute: aim for 62 s unless set
+          cfg.setdefault("video_duration", 62)
           n = cfg["target_piece_count"]
           cfg.update({"render_engine": "cycles", "output_path": "runs",
                       "cycles_samples": 48 if n <= 500 else (32 if n <= 5000 else 20)})
