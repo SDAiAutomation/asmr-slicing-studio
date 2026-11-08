@@ -200,9 +200,12 @@ class Extruded:
         """Fat rim along the outline + thin marbling veins (deterministic)."""
         th = np.arctan2(y, x)
         rel = np.hypot(x, y) / self.radius(th)
-        vein = np.abs(np.sin(9 * x / self.ax + 2.2 * np.sin(5 * y / self.ay)) +
-                      0.6 * np.sin(7 * y / self.ay + 1.1)) < 0.10
-        return (rel > 1 - self.fat) | (vein & (rel < 0.8))
+        # sparse marbling: hashed fat specks (~5 %), clumped by a coarse modulation
+        h = np.sin(x * 12.9898e3 + y * 78.233e3 + z * 37.719e3) * 43758.5453
+        h = h - np.floor(h)
+        clump = 0.5 + 0.5 * np.sin(31 * x / self.ax + 3.0) * np.sin(23 * y / self.ay + 1.0)
+        speck = h < 0.02 + 0.07 * clump
+        return (rel > 1 - self.fat) | (speck & (rel < 0.9))
 
     def bbox(self):
         o = self.outline(720)

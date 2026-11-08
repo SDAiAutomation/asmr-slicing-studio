@@ -659,13 +659,37 @@ def build_camera(plan, cfg):
     return cam
 
 
+_FONT = []
+
+
+def _bold_font():
+    """A heavy sans font reads far better on a phone than Blender's default."""
+    if not _FONT:
+        cands = [os.environ.get("ASMR_FONT", ""),
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                 "C:/Windows/Fonts/arialbd.ttf", "/Library/Fonts/Arial Bold.ttf"]
+        font = None
+        for c in cands:
+            if c and os.path.exists(c):
+                try:
+                    font = bpy.data.fonts.load(c, check_existing=True)
+                    break
+                except Exception:
+                    pass
+        _FONT.append(font)
+    return _FONT[0]
+
+
 def text_obj(name, body, size, loc, parent, mat, align="CENTER"):
     cu = bpy.data.curves.new(name, "FONT")
     cu.body = body
     cu.size = size
     cu.align_x = align
     cu.align_y = "CENTER"
-    cu.offset = size * 0.03  # heavier strokes: readable on a phone
+    f = _bold_font()
+    if f is not None:
+        cu.font = f
     ob = bpy.data.objects.new(name, cu)
     ob.data.materials.append(mat)
     bpy.context.scene.collection.objects.link(ob)
