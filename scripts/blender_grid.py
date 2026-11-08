@@ -145,8 +145,8 @@ def meat_group(M):
     # wet, uneven sheen: rougher where there is fat
     rg = N.new("ShaderNodeMath")
     rg.operation = "MULTIPLY_ADD"
-    rg.inputs[1].default_value = 0.25
-    rg.inputs[2].default_value = 0.28
+    rg.inputs[1].default_value = 0.15
+    rg.inputs[2].default_value = 0.52
     L.new(vm.outputs[0], rg.inputs[0])
     L.new(rg.outputs[0], go.inputs["Roughness"])
     hh = N.new("ShaderNodeMath")
@@ -172,8 +172,9 @@ def _wire_meat(mat, nt, bsdf, M, coord_socket):
     B.set_input(bsdf, ["Subsurface Weight", "Subsurface"], 0.22)
     B.set_input(bsdf, "Subsurface Radius", (0.012, 0.003, 0.002))
     B.set_input(bsdf, "Subsurface Scale", 0.01)
-    B.set_input(bsdf, ["Coat Weight", "Clearcoat"], 0.25)       # slight surface moisture
-    B.set_input(bsdf, ["Coat Roughness", "Clearcoat Roughness"], 0.12)
+    B.set_input(bsdf, ["Coat Weight", "Clearcoat"], 0.06)       # slight surface moisture
+    B.set_input(bsdf, ["Coat Roughness", "Clearcoat Roughness"], 0.3)
+    B.set_input(bsdf, ["Specular IOR Level", "Specular"], 0.3)
 
 
 def meat_mat(M):
@@ -193,11 +194,12 @@ def fat_mat(M):
     r = B.ramp(nt, [(0.35, (0.80, 0.70, 0.58)), (0.65, (0.93, 0.87, 0.78))])
     L.new(nz.outputs["Fac"], r.inputs["Fac"])
     L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
-    B.set_input(bsdf, "Roughness", 0.38)
+    B.set_input(bsdf, "Roughness", 0.5)
+    B.set_input(bsdf, ["Specular IOR Level", "Specular"], 0.3)
     B.set_input(bsdf, ["Subsurface Weight", "Subsurface"], 0.3)
     B.set_input(bsdf, "Subsurface Radius", (0.01, 0.008, 0.005))
     B.set_input(bsdf, "Subsurface Scale", 0.006)
-    B.set_input(bsdf, ["Coat Weight", "Clearcoat"], 0.2)
+    B.set_input(bsdf, ["Coat Weight", "Clearcoat"], 0.04)
     return mat
 
 
