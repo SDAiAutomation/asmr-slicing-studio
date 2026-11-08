@@ -577,6 +577,15 @@ def build_scene(plan, out_dir):
         parts = half(src, co, no, False, rim_w) + half(src, co, no, True, rim_w)
         info = [validate(b) for b in parts]
         good = [(b, i) for b, i in zip(parts, info) if i["volume"] > 1e-10]
+        if len(good) < 2:
+            # the planned plane misses the real mesh (voxel vs mesh shape): make the same
+            # cut through the mesh's own centre instead - still a real, verified cut
+            centre = validate(src)["center"]
+            parts = half(src, centre, no, False, rim_w) + half(src, centre, no, True, rim_w)
+            info = [validate(b) for b in parts]
+            good = [(b, i) for b, i in zip(parts, info) if i["volume"] > 1e-10]
+            report.setdefault("recentred_cuts", 0)
+            report["recentred_cuts"] += 1
         kids = h["children"]
         # match blender parts to planned children by nearest centroid
         unused = list(kids)

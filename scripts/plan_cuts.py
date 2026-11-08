@@ -250,9 +250,11 @@ def plan(cfg):
                 pts = grid.pts(p.idx)
                 d = (pts - p.centroid) @ n
                 halves = [p.idx[d < 0], p.idx[d >= 0]]
-                parts = []
-                for hidx in halves:
-                    parts.extend(grid.components(hidx))
+                # one planned child per side of the plane. Splitting a side into voxel
+                # "components" here created phantom pieces that the real mesh does not have
+                # (thin rounded edges, voxel staircases). Blender splits the actual mesh into
+                # its real islands and the counter follows Blender, never this estimate.
+                parts = [h_ for h_ in halves if len(h_)]
                 contact = frame
                 exit_f = frame + traverse
                 off_parent = p.offset_at(contact)
