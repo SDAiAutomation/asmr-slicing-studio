@@ -364,26 +364,12 @@ def blade_quat(n, d):
 # ---------------------------------------------------------------------------
 # scene
 # ---------------------------------------------------------------------------
-def build_scene(plan, out_dir):
-    t0 = time.time()
-    cfg = plan["config"]
-    shape = OBJECTS[cfg["object_type"]]
-    M = MATERIALS[cfg["material_profile"]]
-    fps = plan["fps"]
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    scn = bpy.context.scene
-    scn.render.fps = fps
-    scn.frame_start, scn.frame_end = 1, plan["total_frames"]
-
-    skin, flesh = make_skin(M, shape), make_flesh(M)
-    rim = simple_mat("Rim", M["rim"], 0.35)
-    mats = [skin, flesh, rim]
-
-    # --- environment: board, backdrop, lights, world
+def setup_environment(scn, board_size=(0.46, 0.34)):
+    """Wooden board, dark backdrop, soft studio lights."""
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, -0.011))
     board = bpy.context.object
     board.name = "Board"
-    board.scale = (0.46, 0.34, 0.02)
+    board.scale = (board_size[0], board_size[1], 0.02)
     board.data.materials.append(wood_mat())
     bpy.ops.object.modifier_add(type="BEVEL")
     board.modifiers[-1].width = 0.004
@@ -410,6 +396,25 @@ def build_scene(plan, out_dir):
     area("Key", (-0.45, -0.35, 0.55), 55, 0.45)
     area("Fill", (0.55, -0.45, 0.30), 14, 0.6, (0.85, 0.9, 1.0))
     area("Rim", (0.10, 0.60, 0.45), 40, 0.35)
+    return board
+
+
+def build_scene(plan, out_dir):
+    t0 = time.time()
+    cfg = plan["config"]
+    shape = OBJECTS[cfg["object_type"]]
+    M = MATERIALS[cfg["material_profile"]]
+    fps = plan["fps"]
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scn = bpy.context.scene
+    scn.render.fps = fps
+    scn.frame_start, scn.frame_end = 1, plan["total_frames"]
+
+    skin, flesh = make_skin(M, shape), make_flesh(M)
+    rim = simple_mat("Rim", M["rim"], 0.35)
+    mats = [skin, flesh, rim]
+
+    setup_environment(scn)
 
     # --- knife
     knife = build_knife()
@@ -502,7 +507,14 @@ def build_scene(plan, out_dir):
 
     animate_knife(knife, plan, pieces, keys_of)
     cam = build_camera(plan, cfg)
-    build_overlay(cam, cfg, M, counter_events, plan["total_frames"])
+    cuts_events, done = [], {}
+    for p_ in plan["pieces"]:
+        if p_["parent"] is None:
+            cuts_events.append((p_["born_frame"] if p_["level"] else 1, 0))
+    for h in plan["hits"]:
+        done[h["level"]] = done.get(h["level"], 0) + 1
+        cuts_events.append((h["exit_frame"], done[h["level"]]))
+    build_overlay(cam, cfg, cuts_events, counter_events, plan["total_frames"])
     setup_render(scn, cfg, out_dir, final=False)
     report["build_seconds"] = round(time.time() - t0, 2)
     report["counter_events"] = counter_events
@@ -657,35 +669,41 @@ def text_obj(name, body, size, loc, parent, mat, align="CENTER"):
     return ob
 
 
-def build_overlay(cam, cfg, M, counter_events, total):
+def _fmt(n):
+    return f"{int(n):,}"
+
+
+def _counter(cam, name, events, size, y, D, mat):
+    per_frame = {}
+    for f, c in sorted(events, key=lambda e: e[0]):
+        per_frame[max(1, int(f))] = c  # last value reached in that frame
+    ev = sorted(per_frame.items())
+    for i, (f, c) in enumerate(ev):
+        nxt = ev[i + 1][0] if i + 1 < len(ev) else None
+        ob = text_obj(f"{name}_{i:05d}", _fmt(c), size, (0, y, -D), cam, mat)
+        set_visibility(ob, f, nxt)
+
+
+def build_overlay(cam, cfg, cuts_events, pieces_events, total):
+    """Two counters in every format: CUTS on top, PIECES/CUBES at the bottom."""
     white = simple_mat("Overlay", (1, 1, 1), 1.0, 0.0, emit=(1, 1, 1))
     accent = simple_mat("OverlayAccent", (1, 0.75, 0.3), 1.0, 0.0, emit=(1, 0.72, 0.25))
     D = 0.1
-    w, h = cfg["resolution"]
-    half_h = D * math.tan(math.atan(18 / 50))
-    half_w = half_h * w / h
-    text_obj("Label", M["label"], half_h * 0.06, (0, half_h * 0.80, -D), cam, accent)
-    if cfg["show_counter"]:
-        text_obj("PiecesWord", "PIECES", half_h * 0.05, (0, half_h * 0.57, -D), cam, white)
-        # one text object per validated count value, switched on/off in time
-        per_frame = {}
-        for f, c in sorted(counter_events):
-            per_frame[f] = c  # last value reached in that frame
-        ev = sorted(per_frame.items())
-        for i, (f, c) in enumerate(ev):
-            nxt = ev[i + 1][0] if i + 1 < len(ev) else None
-            ob = text_obj(f"Count_{i:05d}", f"{c:,}".replace(",", " "), half_h * 0.13, (0, half_h * 0.68, -D), cam, white)
-            set_visibility(ob, f, nxt)
+    hh = D * math.tan(math.atan(18 / 50))
     fps = bpy.context.scene.render.fps
+    if cfg["show_counter"]:
+        _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.76, D, white)
+        text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.62, -D), cam, accent)
+        _counter(cam, "Pieces", pieces_events, hh * 0.085, -hh * 0.72, D, white)
+        text_obj("PiecesWord", cfg["label_pieces"], hh * 0.045, (0, -hh * 0.81, -D), cam, accent)
     if cfg.get("hook_text"):
-        ob = text_obj("Hook", cfg["hook_text"], half_h * 0.07, (0, -half_h * 0.62, -D), cam, accent)
-        ob.data.body = _wrap(cfg["hook_text"], 22)
+        ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.47, -D), cam, white)
         set_visibility(ob, 1, int(3.0 * fps))
     if cfg.get("end_text"):
-        ob = text_obj("EndText", _wrap(cfg["end_text"], 22), half_h * 0.07, (0, -half_h * 0.62, -D), cam, accent)
+        ob = text_obj("EndText", _wrap(cfg["end_text"], 22), hh * 0.065, (0, hh * 0.47, -D), cam, white)
         set_visibility(ob, max(2, total - int(2.5 * fps)), None)
     if cfg["watermark"]:
-        text_obj("Watermark", cfg["watermark"], half_h * 0.045, (0, -half_h * 0.86, -D), cam, white)
+        text_obj("Watermark", cfg["watermark"], hh * 0.035, (0, -hh * 0.58, -D), cam, white)
 
 
 def _wrap(text, width):
@@ -765,7 +783,11 @@ def main():
     if a["stage"] == "build":
         with open(a["plan"], encoding="utf-8") as f:
             plan = json.load(f)
-        report = build_scene(plan, out_dir)
+        if plan.get("kind") == "grid":
+            import blender_grid
+            report = blender_grid.build_grid_scene(plan, out_dir)
+        else:
+            report = build_scene(plan, out_dir)
         scn = bpy.context.scene
         scn["asmr_plan"] = os.path.abspath(a["plan"])
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(out_dir, "scene.blend"))
@@ -773,18 +795,27 @@ def main():
         pv = os.path.join(out_dir, "previews")
         os.makedirs(pv, exist_ok=True)
         t1 = time.time()
-        hits, strokes = plan["hits"], plan["strokes"]
-        mid_hit = hits[min(len(hits) - 1, plan["strokes"][min(2, len(strokes) - 1)]["hits"][0])]
-        shots = {"01_opening": 2,
-                 "02_cut_in_progress": (mid_hit["contact_frame"] + mid_hit["exit_frame"]) // 2,
-                 "03_mid_progression": strokes[len(strokes) // 2]["end_frame"] - 1,
-                 "04_final": plan["total_frames"] - 5}
+        small = [r // 2 for r in plan["config"]["preview_resolution"]]
+        if plan.get("kind") == "grid":
+            lv = plan["levels"]
+            mid = lv[min(3, len(lv) - 1)]
+            shots = {"01_opening": 2,
+                     "02_cut_in_progress": (mid["strokes_start"] + mid["strokes_end"]) // 2,
+                     "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
+                     "04_final": lv[-1]["collapse_end"] + 4}
+            sheet = [(l["level"], l["collapse_end"] + 2) for l in lv]
+        else:
+            hits, strokes = plan["hits"], plan["strokes"]
+            mid_hit = hits[min(len(hits) - 1, plan["strokes"][min(2, len(strokes) - 1)]["hits"][0])]
+            shots = {"01_opening": 2,
+                     "02_cut_in_progress": (mid_hit["contact_frame"] + mid_hit["exit_frame"]) // 2,
+                     "03_mid_progression": strokes[len(strokes) // 2]["end_frame"] - 1,
+                     "04_final": plan["total_frames"] - 5}
+            sheet = [(st["index"], st["end_frame"] - 1) for st in strokes]
         for name, f in shots.items():
             render_still(scn, f, os.path.join(pv, name + ".png"))
-        small = [r // 2 for r in plan["config"]["preview_resolution"]]
-        for st in strokes:
-            render_still(scn, st["end_frame"] - 1,
-                         os.path.join(pv, "strokes", f"s_{st['index']:02d}.png"), small)
+        for i, f in sheet:
+            render_still(scn, f, os.path.join(pv, "strokes", f"s_{i:02d}.png"), small)
         report["preview_seconds"] = round(time.time() - t1, 2)
         report["preview_frames"] = shots
         with open(os.path.join(out_dir, "blender_report.json"), "w", encoding="utf-8") as f:

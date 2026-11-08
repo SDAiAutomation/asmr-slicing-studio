@@ -132,22 +132,29 @@ def cmd_preview(config_path):
         json.dump(cfg, f, indent=1)
     perf = {}
     plan_path = os.path.join(rd, "plan.json")
-    plan_stats, perf["plan_s"] = run_py("plan_cuts.py", os.path.join(rd, "config.json"), plan_path)
+    planner = "plan_grid.py" if cfg["format"] == "grid" else "plan_cuts.py"
+    plan_stats, perf["plan_s"] = run_py(planner, os.path.join(rd, "config.json"), plan_path)
     audio, perf["audio_s"] = run_py("make_audio.py", plan_path, rd)
     rep, perf["blender_build_and_previews_s"] = run_blender(
         ["--plan", plan_path, "--out", rd, "--stage", "build"], os.path.join(rd, "blender.log"))
     sheet = contact_sheet(rd)
     with open(os.path.join(rd, "plan.json"), encoding="utf-8") as f:
         plan = json.load(f)
-    impacts = [{"hit": i, "stroke": h["stroke"], "contact_frame": h["contact_frame"],
-                "exit_frame": h["exit_frame"], "normal": [round(x, 3) for x in h["plane_normal"]],
-                "count_after": h["count_after"]} for i, h in enumerate(plan["hits"])]
+    if plan.get("kind") == "grid":
+        impacts = [{"level": s["level"], "axis": "XYZ"[s["axis"]], "frame": s["frame"],
+                    "cut": s["n_in_level"]} for s in plan["strokes"]]
+    else:
+        impacts = [{"hit": i, "stroke": h["stroke"], "contact_frame": h["contact_frame"],
+                    "exit_frame": h["exit_frame"], "normal": [round(x, 3) for x in h["plane_normal"]],
+                    "count_after": h["count_after"]} for i, h in enumerate(plan["hits"])]
     with open(os.path.join(rd, "impact_frames.json"), "w", encoding="utf-8") as f:
         json.dump(impacts, f, indent=1)
     summary = {"run_dir": rd, "plan": plan_stats, "audio": audio, "blender": rep,
                "perf": {k: round(v, 2) for k, v in perf.items()}, "progression_sheet": sheet,
-               "strokes": [{"i": s["index"], "direction": s["direction"],
-                            "count_after": s["count_after"]} for s in plan["strokes"]]}
+               "strokes": ([{"level": l["level"], "cuts": l["cuts"], "cubes": l["cubes"]} for l in plan["levels"]]
+                           if plan.get("kind") == "grid" else
+                           [{"i": s["index"], "direction": s["direction"],
+                             "count_after": s["count_after"]} for s in plan["strokes"]])}
     with open(os.path.join(rd, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)
     print(json.dumps(summary, indent=1))

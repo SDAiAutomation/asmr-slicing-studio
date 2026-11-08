@@ -22,6 +22,22 @@ SR = 48000
 
 # Per-material sound design. Frequencies in Hz, durations in seconds.
 PROFILES = {
+    "steak": {   # dense, moist meat: thick squelch, little crackle, deep board knock
+        "contact": dict(band=(2000, 7000), dur=0.005, gain=0.25),
+        "body": dict(band=(500, 2500), gain=0.45, crackle=15, crackle_gain=0.15,
+                     squish=(90, 420), squish_gain=0.60),
+        "end": dict(f0=190, decay=0.05, gain=0.50, click=0.25),
+        "separate": dict(band=(200, 1200), dur=0.08, gain=0.30),
+        "land": dict(f0=110, decay=0.07, gain=0.28),
+    },
+    "cake": {    # soft sponge: airy, quiet
+        "contact": dict(band=(2500, 8000), dur=0.004, gain=0.15),
+        "body": dict(band=(800, 4000), gain=0.35, crackle=30, crackle_gain=0.20,
+                     squish=(150, 600), squish_gain=0.25),
+        "end": dict(f0=230, decay=0.04, gain=0.40, click=0.20),
+        "separate": dict(band=(400, 2000), dur=0.06, gain=0.20),
+        "land": dict(f0=140, decay=0.05, gain=0.20),
+    },
     "mango": {   # soft wet chop: juicy squelch, fibrous crackle, soft board tap
         "contact": dict(band=(2500, 9000), dur=0.006, gain=0.35),
         "body": dict(band=(700, 3800), gain=0.55, crackle=55, crackle_gain=0.35,
@@ -122,6 +138,72 @@ def pick(samples, ev, rng):
     return signal.resample(y, max(8, int(len(y) / rate)))
 
 
+def chop(rng, P, samples, dur, nh=1):
+    """contact + body (penetration/traversal) + board tap, as one buffer."""
+    c, b, e = P["contact"], P["body"], P["end"]
+    n = int(SR * (dur + 0.25))
+    out = np.zeros(n)
+    y = pick(samples, "contact", rng)
+    if y is None:
+        m = int(SR * c["dur"])
+        y = bandnoise(rng, m, *c["band"]) * env_ad(m, 0.05, 3)
+    out[:len(y)] += y[:n] * c["gain"]
+    m = int(SR * dur)
+    y = pick(samples, "body", rng)
+    if y is None:
+        body = bandnoise(rng, m, *b["band"]) * b["gain"] + bandnoise(rng, m, *b["squish"]) * b["squish_gain"]
+        cr = np.zeros(m)
+        for pos in rng.integers(0, max(1, m - 200), size=rng.poisson(b["crackle"] * dur * (1 + 0.5 * np.log2(nh)))):
+            k = int(rng.integers(40, 160))
+            cr[pos:pos + k] += rng.standard_normal(len(cr[pos:pos + k])) * np.exp(-np.arange(len(cr[pos:pos + k])) / 25)
+        y = (body + cr * b["crackle_gain"]) * np.minimum(1, np.linspace(0, 1, m) * 4)
+    i0 = int(SR * 0.004)
+    out[i0:i0 + len(y)] += y[: n - i0]
+    y = pick(samples, "end", rng)
+    if y is None:
+        y = tone(rng, e["f0"], e["decay"])
+    y = y[: int(SR * 0.09)] * np.linspace(1, 0, min(len(y), int(SR * 0.09))) ** 2
+    out[m:m + len(y)] += y[: n - m] * e["gain"]
+    return out[: m + len(y)]
+
+
+def grid_events(plan, buf, P, rng, samples, events, t_of):
+    """Grid format: a chop per stroke frame, a crumble cascade when the object collapses."""
+    # keep a readable rhythm: at most ~10 chops per second, extra strokes thicken each chop
+    fps = plan["fps"]
+    step = max(1, round(fps / 10))
+    groups = {}
+    for st in plan["strokes"]:
+        groups.setdefault(st["frame"] - (st["frame"] - 1) % step, []).append(st)
+    for f in sorted(groups):
+        g = groups[f]
+        nh = len(g)
+        x = np.mean([s_["pos"] if s_["axis"] == 0 else 0.0 for s_ in g])
+        span = max(0.05, plan["levels"][g[0]["level"]]["ext"][0] / 2)
+        pan = float(np.clip(x / span * 0.5, -0.6, 0.6))
+        dur = 0.035 if nh > 1 else 0.06   # short, crisp chops so fast phases keep a rhythm
+        gain = rng.uniform(0.8, 1.1) * (1.0 if nh == 1 else min(1.3, 0.85 + 0.12 * np.log2(nh)))
+        place(buf, t_of(f), chop(rng, P, samples, dur, nh), pan, gain)
+        events.append({"t": t_of(f), "type": "contact", "strokes": nh})
+        events.append({"t": t_of(f) + dur, "type": "end_of_cut", "strokes": nh})
+    for lvl in plan["levels"]:
+        t0, t1 = t_of(lvl["collapse_start"]), t_of(lvl["collapse_end"])
+        n = int(SR * (t1 - t0 + 0.4))
+        dens = 60 + 90 * np.log10(max(10, lvl["cubes"]))      # grains per second
+        y = np.zeros(n)
+        for pos in rng.integers(0, max(1, int(SR * (t1 - t0))), size=int(dens * (t1 - t0))):
+            k = int(rng.integers(60, 400))
+            seg = rng.standard_normal(k) * np.exp(-np.arange(k) / rng.uniform(15, 60))
+            y[pos:pos + k] += seg[: n - pos] * rng.uniform(0.2, 1.0)
+        y = signal.sosfilt(signal.butter(2, [600, 7000], "band", fs=SR, output="sos"), y)
+        y *= np.concatenate([np.linspace(0.3, 1, n // 3), np.linspace(1, 0, n - n // 3) ** 1.5])
+        place(buf, t0, y, 0.0, 0.5)
+        thud = tone(rng, P["land"]["f0"], P["land"]["decay"] * 1.5)
+        place(buf, t1 - 0.05, thud, 0.0, P["land"]["gain"] * 1.4)
+        events.append({"t": t0, "type": "separation", "level": lvl["level"]})
+        events.append({"t": t1, "type": "surface_contact", "level": lvl["level"]})
+
+
 def render(plan, out_dir):
     cfg = plan["config"]
     prof_name = cfg["audio_profile"]
@@ -135,15 +217,17 @@ def render(plan, out_dir):
     t_of = lambda f: (f - 1) / fps  # frame 1 is t = 0
 
     # scene width for stereo placement
-    xs = [h["plane_point"][0] + h["offset"][0] for h in plan["hits"]] or [0]
+    if plan.get("kind") == "grid":
+        grid_events(plan, buf, P, rng, samples, events, t_of)
+    xs = [h["plane_point"][0] + h["offset"][0] for h in plan.get("hits", [])] or [0]
     span = max(0.05, max(abs(min(xs)), abs(max(xs))))
 
     # Dense strokes cut several pieces in the same frame: one richer sound per frame
     # instead of hundreds of stacked transients (which would turn into white noise).
     groups = {}
-    for h in plan["hits"]:
+    for h in plan.get("hits", []):
         groups.setdefault(h["contact_frame"], []).append(h)
-    root_vol = max(1e-9, plan["pieces"][0]["volume"])
+    root_vol = max(1e-9, plan["pieces"][0]["volume"]) if plan.get("pieces") else 1.0
     for cf in sorted(groups):
         g = groups[cf]
         h = g[0]

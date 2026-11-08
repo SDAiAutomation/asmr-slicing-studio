@@ -26,6 +26,11 @@ Les guides type « Pehle se pieces banao aur seams reveal karo » pré-découpen
 - **Coups de lame ≠ plans de coupe ≠ morceaux.** Un coup (stroke) = une direction appliquée à plusieurs morceaux ; un plan peut créer 2 morceaux ou plus. Le compteur affiche le nombre de **parties de mesh validées** par Blender, jamais une estimation.
 - **Objet reconnaissable.** La mangue est une forme paramétrique inversible (réniforme, épaule côté pédoncule, petit bec, aplatie) de ~13,5 × 9,7 × 8,3 cm. Planificateur et Blender utilisent la même équation (`scripts/common.py`), donc les centroïdes concordent.
 
+## Deux formats (compteurs CUTS + PIECES/CUBES dans les deux)
+
+- `format: "slices"` (défaut) : découpe progressive réelle, morceau par morceau (planificateur `plan_cuts.py`).
+- `format: "grid"` : niveaux « N CUTS → X CUBES » (`plan_grid.py` + `blender_grid.py`) : coupes en grille sur X, Y puis Z, coutures visibles, effondrement en cubes instanciés (Geometry Nodes), jusqu'à ~12 millions de cubes. `cuts_sequence` fixe les coupes par niveau. Objets : `steak`, `cake`, `mango`, `soap`…
+
 ## Utilisation
 
 1. **Vérifier les outils** (une fois) : `python scripts/run.py check`. Si Blender/FFmpeg introuvables, demander le chemin complet et définir `BLENDER_PATH`, `FFMPEG_PATH`, `FFPROBE_PATH`.

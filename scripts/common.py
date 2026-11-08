@@ -35,9 +35,15 @@ DEFAULTS = {
     "show_counter": True,
     "hook_text": "",                   # big question shown during the opening seconds
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
+    "format": "slices",                # "slices" (progressive halving) | "grid" (levels of grid cuts -> cubes)
+    "cuts_sequence": None,             # grid format: cuts per level; None -> auto
+    "max_cubes": 20000000,             # grid format: safety cap on the final level
+    "label_cuts": "CUTS",
+    "label_pieces": None,              # None -> "PIECES" (slices) / "CUBES" (grid)
     "grid_resolution": None,           # None -> auto from target count
 }
 
+GRID_AUTO_CUTS = [4, 10, 15, 25, 40, 60, 100, 160, 250, 400, 600, 1000]
 AUTO_SEQUENCE = [2, 3, 4, 5, 8, 10, 15, 25, 50, 100, 200, 400, 1000, 2500, 5000, 10000, 25000, 50000]
 
 DIRECTION_NAMES = ["vertical", "horizontal", "diagonal", "cross", "angled", "random3d"]
@@ -83,6 +89,16 @@ def validate_config(cfg):
     if any(b <= a for a, b in zip(seq, seq[1:])) or seq[0] < 2:
         raise ValueError(f"progression_sequence must be strictly increasing and >= 2: {seq}")
     cfg["progression_sequence"] = seq
+    if cfg["format"] not in ("slices", "grid"):
+        raise ValueError("format must be 'slices' or 'grid'")
+    if cfg["label_pieces"] is None:
+        cfg["label_pieces"] = "CUBES" if cfg["format"] == "grid" else "PIECES"
+    if cfg["format"] == "grid":
+        cs = cfg["cuts_sequence"] or GRID_AUTO_CUTS
+        cs = [int(c) for c in cs]
+        if any(c < 1 for c in cs):
+            raise ValueError("cuts_sequence values must be >= 1")
+        cfg["cuts_sequence"] = cs
     if cfg["grid_resolution"] is None:
         # ~60 voxels per final piece on average (inside volume ~ 0.23 * res^3)
         cfg["grid_resolution"] = int(max(72, min(240, round((60 * n / 0.23) ** (1 / 3)))))
@@ -151,7 +167,54 @@ MANGO = Shape(a_pos=0.050, a_neg=0.044, b=0.066, c=0.040,
 SOAP = Shape(a_pos=0.045, a_neg=0.045, b=0.065, c=0.022, z_lift=0.0225)
 JELLY = Shape(a_pos=0.050, a_neg=0.050, b=0.050, c=0.040, z_flat=-0.15, z_lift=0.0405)
 
-OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP}
+class Extruded:
+    """Flat object (steak, cake slice...): an irregular outline extruded upwards.
+    Bottom rests on the board (z = 0)."""
+
+    kind = "extruded"
+
+    def __init__(self, ax, ay, h, notch=0.10, fat=0.10, seed_phase=0.6):
+        self.ax, self.ay, self.h = ax, ay, h
+        self.notch, self.fat, self.ph = notch, fat, seed_phase
+
+    def radius(self, th):
+        th = np.asarray(th, float)
+        e = 1.0 / np.sqrt((np.cos(th) / self.ax) ** 2 + (np.sin(th) / self.ay) ** 2)
+        d = np.angle(np.exp(1j * (th - 1.95)))
+        mod = (1 + 0.05 * np.cos(2 * th + self.ph) + 0.045 * np.cos(3 * th + 1.3)
+               + 0.02 * np.cos(5 * th + 0.4) - self.notch * np.exp(-(d / 0.28) ** 2))
+        return e * mod
+
+    def outline(self, n=240):
+        th = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        r = self.radius(th)
+        return np.stack([r * np.cos(th), r * np.sin(th)], 1)
+
+    def inside(self, x, y, z):
+        x, y, z = np.asarray(x, float), np.asarray(y, float), np.asarray(z, float)
+        th = np.arctan2(y, x)
+        return (np.hypot(x, y) <= self.radius(th)) & (z >= 0) & (z <= self.h)
+
+    def is_fat(self, x, y, z):
+        """Fat rim along the outline + thin marbling veins (deterministic)."""
+        th = np.arctan2(y, x)
+        rel = np.hypot(x, y) / self.radius(th)
+        vein = np.abs(np.sin(9 * x / self.ax + 2.2 * np.sin(5 * y / self.ay)) +
+                      0.6 * np.sin(7 * y / self.ay + 1.1)) < 0.10
+        return (rel > 1 - self.fat) | (vein & (rel < 0.8))
+
+    def bbox(self):
+        o = self.outline(720)
+        lo = np.array([o[:, 0].min(), o[:, 1].min(), 0.0])
+        hi = np.array([o[:, 0].max(), o[:, 1].max(), self.h])
+        return lo, hi
+
+
+STEAK = Extruded(ax=0.105, ay=0.068, h=0.028)
+CAKE = Extruded(ax=0.085, ay=0.085, h=0.055, notch=0.0, fat=0.07, seed_phase=0.0)
+
+OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
+           "steak": STEAK, "cake": CAKE}
 
 
 # --------------------------------------------------------------------------
@@ -185,6 +248,24 @@ MATERIALS = {
         "flesh_roughness": 0.04, "flesh_subsurface": 0.8, "fibrous": False,
         "rim": (0.85, 0.05, 0.12), "rim_width": 0.0,
         "separation": 0.12, "pit_strategy": "none",
+    },
+    "steak": {
+        "label": "STEAK",
+        "skin_base": (0.92, 0.86, 0.78), "skin_stem": (0.92, 0.86, 0.78),
+        "skin_blush": (0.92, 0.86, 0.78), "skin_roughness": 0.45,
+        "flesh": (0.62, 0.035, 0.03), "flesh_deep": (0.48, 0.02, 0.02),
+        "flesh_roughness": 0.35, "flesh_subsurface": 0.15, "fibrous": False,
+        "rim": (0.92, 0.86, 0.78), "rim_width": 0.0,
+        "separation": 0.10, "pit_strategy": "none",
+    },
+    "cake": {
+        "label": "CAKE",
+        "skin_base": (0.85, 0.55, 0.65), "skin_stem": (0.85, 0.55, 0.65),
+        "skin_blush": (0.85, 0.55, 0.65), "skin_roughness": 0.5,
+        "flesh": (0.80, 0.55, 0.25), "flesh_deep": (0.70, 0.45, 0.18),
+        "flesh_roughness": 0.7, "flesh_subsurface": 0.05, "fibrous": False,
+        "rim": (0.85, 0.55, 0.65), "rim_width": 0.0,
+        "separation": 0.10, "pit_strategy": "none",
     },
     "chocolate": {
         "label": "CHOCOLATE",

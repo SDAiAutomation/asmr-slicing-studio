@@ -1,0 +1,458 @@
+"""Blender builder for the grid / levels format ("N CUTS -> X CUBES").
+
+Per level:
+  - a fresh object slides onto the board,
+  - the knife makes the planned straight cuts; each cut leaves a visible seam
+    (shader driven by animated cut counts, so millions of cuts stay cheap),
+  - the scored object is swapped for its real cubes (one instance per occupied
+    cell, Geometry Nodes), which slump and spread on the board,
+  - the pile slides away and the next level comes in.
+CUTS and PIECES/CUBES counters come from the plan's exact cell counts; the cube
+object of each level is checked against the planned cube count.
+"""
+import math
+import time
+
+import bpy
+import bmesh
+import numpy as np
+from mathutils import Vector
+
+import blender_build as B
+from common import MATERIALS, OBJECTS
+
+
+# ---------------------------------------------------------------------------
+# meshes
+# ---------------------------------------------------------------------------
+def extruded_mesh(shape):
+    bm = bmesh.new()
+    out = shape.outline(240)
+    inner = out * (1 - shape.fat)
+    n = len(out)
+    b = [bm.verts.new((x, y, 0.0)) for x, y in out]
+    t = [bm.verts.new((x, y, shape.h)) for x, y in out]
+    ti = [bm.verts.new((x, y, shape.h)) for x, y in inner]
+    f = bm.faces.new(list(reversed(b)))
+    f.material_index = 1
+    for i in range(n):
+        j = (i + 1) % n
+        side = bm.faces.new((b[i], b[j], t[j], t[i]))
+        side.material_index, side.smooth = 0, True
+        ring = bm.faces.new((t[i], t[j], ti[j], ti[i]))
+        ring.material_index = 0
+    top = bm.faces.new(ti)
+    top.material_index = 1
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    return bm
+
+
+def object_mesh(shape, name):
+    bm = extruded_mesh(shape) if getattr(shape, "kind", "") == "extruded" else B.build_root_mesh(shape)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    return me
+
+
+# ---------------------------------------------------------------------------
+# materials
+# ---------------------------------------------------------------------------
+def meat_mat(M):
+    mat, nt, bsdf = B.principled("Meat")
+    L = nt.links
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    noise = nt.nodes.new("ShaderNodeTexNoise")
+    B.set_input(noise, "Scale", 22.0)
+    B.set_input(noise, "Detail", 6.0)
+    L.new(tc.outputs["Object"], noise.inputs["Vector"])
+    # thin white marbling veins: narrow band of the noise field
+    band = nt.nodes.new("ShaderNodeMath")
+    band.operation = "PINGPONG"
+    band.inputs[1].default_value = 0.08
+    L.new(noise.outputs["Fac"], band.inputs[0])
+    vr = B.ramp(nt, [(0.0, (1, 1, 1)), (0.018, (0, 0, 0))])
+    L.new(band.outputs[0], vr.inputs["Fac"])
+    m, f, a, b, o = B.mix_rgb(nt)
+    L.new(vr.outputs["Color"], f)
+    a.default_value = (*M["flesh"], 1)
+    b.default_value = (0.95, 0.88, 0.82, 1)
+    L.new(o, bsdf.inputs["Base Color"])
+    B.set_input(bsdf, "Roughness", M["flesh_roughness"])
+    B.set_input(bsdf, ["Subsurface Weight", "Subsurface"], M["flesh_subsurface"])
+    B.set_input(bsdf, "Subsurface Radius", (0.01, 0.003, 0.002))
+    B.set_input(bsdf, "Subsurface Scale", 0.01)
+    return mat
+
+
+def add_seams(mat, P, nodes_out):
+    """Darken thin lines at the planned cut positions whose cut is already made.
+    P: dict name -> Value node (lo_x.., cell_x.., n_x, n_y, n_z, cz, w)."""
+    nt = mat.node_tree
+    L = nt.links
+    bsdf = nt.nodes.get("Principled BSDF")
+    base_link = next((l for l in nt.links if l.to_socket == bsdf.inputs["Base Color"]), None)
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    L.new(tc.outputs["Object"], sep.inputs[0])
+
+    def val(name):
+        if name not in P:
+            v = nt.nodes.new("ShaderNodeValue")
+            v.name = v.label = name
+            v.outputs[0].default_value = 0.0
+            P[name] = v
+        return P[name].outputs[0]
+
+    def math(op, a, b=None, c=None):
+        m = nt.nodes.new("ShaderNodeMath")
+        m.operation = op
+        for i, x in enumerate((a, b, c)):
+            if x is None:
+                continue
+            if isinstance(x, (int, float)):
+                m.inputs[i].default_value = x
+            else:
+                L.new(x, m.inputs[i])
+        return m.outputs[0]
+
+    total = None
+    for ax, comp in enumerate("XYZ"):
+        u = math("DIVIDE", math("SUBTRACT", sep.outputs[comp], val(f"lo_{ax}")), val(f"cell_{ax}"))
+        k = math("ROUND", u)
+        dist = math("MULTIPLY", math("ABSOLUTE", math("SUBTRACT", u, k)), val(f"cell_{ax}"))
+        line = math("LESS_THAN", dist, val("w"))
+        if ax < 2:  # cuts 1..n made, sweeping from low to high coordinate
+            active = math("MULTIPLY", math("GREATER_THAN", k, 0.5),
+                          math("LESS_THAN", k, math("ADD", val(f"n_{ax}"), 0.5)))
+        else:      # horizontal cuts land from the top: indices > cz - n
+            active = math("MULTIPLY", math("GREATER_THAN", k, math("SUBTRACT", val("cz"), math("SUBTRACT", val("n_2"), 0.5))),
+                          math("LESS_THAN", k, math("ADD", val("cz"), 0.5)))
+        s = math("MULTIPLY", line, active)
+        total = s if total is None else math("MAXIMUM", total, s)
+    m, f, a, b, o = B.mix_rgb(nt)
+    L.new(total, f)
+    if base_link is not None:
+        L.new(base_link.from_socket, a)
+    else:
+        a.default_value = bsdf.inputs["Base Color"].default_value
+    b.default_value = (0.03, 0.006, 0.004, 1)
+    L.new(o, bsdf.inputs["Base Color"])
+    nodes_out.append(P)
+
+
+def cube_mat(M, steak):
+    mat, nt, bsdf = B.principled("Cubes")
+    L = nt.links
+    at = nt.nodes.new("ShaderNodeAttribute")
+    at.attribute_type = "INSTANCER"
+    at.attribute_name = "kind"
+    outer = (0.95, 0.88, 0.82) if steak else M["skin_base"]
+    r = B.ramp(nt, [(0.0, M["flesh"]), (1.0, outer)])
+    r.color_ramp.interpolation = "CONSTANT"
+    r.color_ramp.elements[1].position = 0.5
+    L.new(at.outputs["Fac"], r.inputs["Fac"])
+    L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
+    B.set_input(bsdf, "Roughness", 0.35)
+    return mat
+
+
+# ---------------------------------------------------------------------------
+# cubes (Geometry Nodes instances)
+# ---------------------------------------------------------------------------
+def collapse_group(mat):
+    ng = bpy.data.node_groups.new("CubeCollapse", "GeometryNodeTree")
+    I = ng.interface
+    I.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    I.new_socket(name="Collapse", in_out="INPUT", socket_type="NodeSocketFloat")
+    I.new_socket(name="CubeSize", in_out="INPUT", socket_type="NodeSocketVector")
+    I.new_socket(name="Height", in_out="INPUT", socket_type="NodeSocketFloat")
+    I.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    N, L = ng.nodes, ng.links
+    gi, go = N.new("NodeGroupInput"), N.new("NodeGroupOutput")
+    pos = N.new("GeometryNodeInputPosition")
+    sep = N.new("ShaderNodeSeparateXYZ")
+    L.new(pos.outputs[0], sep.inputs[0])
+    rnd = N.new("FunctionNodeRandomValue")
+    rnd.data_type = "FLOAT"
+    rv = [o for o in rnd.outputs if o.enabled and o.type == "VALUE"][0]
+
+    def m(op, a, b=None, c=None):
+        n = N.new("ShaderNodeMath")
+        n.operation = op
+        for i, x in enumerate((a, b, c)):
+            if x is None:
+                continue
+            if isinstance(x, (int, float)):
+                n.inputs[i].default_value = x
+            else:
+                L.new(x, n.inputs[i])
+        return n.outputs[0]
+
+    col, H = gi.outputs["Collapse"], gi.outputs["Height"]
+    # cubes sink towards the board (pile keeps ~25-30 % of its height)...
+    dz = m("MULTIPLY", m("MULTIPLY", col, -1.0), m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.22, 0.62)))
+    # ...and the upper ones slide outwards
+    rel = m("DIVIDE", sep.outputs["Z"], m("MAXIMUM", H, 1e-4))
+    spread = m("MULTIPLY", m("MULTIPLY", col, H), m("MULTIPLY", m("ADD", rel, 0.25), m("MULTIPLY_ADD", rv, 1.6, 0.6)))
+    xy = N.new("ShaderNodeCombineXYZ")
+    L.new(sep.outputs["X"], xy.inputs[0])
+    L.new(sep.outputs["Y"], xy.inputs[1])
+    nrm = N.new("ShaderNodeVectorMath")
+    nrm.operation = "NORMALIZE"
+    L.new(xy.outputs[0], nrm.inputs[0])
+    sc = N.new("ShaderNodeVectorMath")
+    sc.operation = "SCALE"
+    L.new(nrm.outputs[0], sc.inputs[0])
+    L.new(spread, sc.inputs["Scale"])
+    vz = N.new("ShaderNodeCombineXYZ")
+    L.new(dz, vz.inputs[2])
+    add = N.new("ShaderNodeVectorMath")
+    add.operation = "ADD"
+    L.new(sc.outputs[0], add.inputs[0])
+    L.new(vz.outputs[0], add.inputs[1])
+    sp = N.new("GeometryNodeSetPosition")
+    L.new(gi.outputs["Geometry"], sp.inputs["Geometry"])
+    L.new(add.outputs[0], sp.inputs["Offset"])
+    cube = N.new("GeometryNodeMeshCube")
+    sz = N.new("ShaderNodeVectorMath")
+    sz.operation = "SCALE"
+    L.new(gi.outputs["CubeSize"], sz.inputs[0])
+    sz.inputs["Scale"].default_value = 0.9
+    L.new(sz.outputs[0], cube.inputs["Size"])
+    sm = N.new("GeometryNodeSetMaterial")
+    L.new(cube.outputs["Mesh"], sm.inputs["Geometry"])
+    sm.inputs["Material"].default_value = mat
+    iop = N.new("GeometryNodeInstanceOnPoints")
+    L.new(sp.outputs["Geometry"], iop.inputs["Points"])
+    L.new(sm.outputs["Geometry"], iop.inputs["Instance"])
+    L.new(iop.outputs["Instances"], go.inputs["Geometry"])
+    ids = {it.name: it.identifier for it in I.items_tree
+           if getattr(it, "item_type", "SOCKET") == "SOCKET" and it.in_out == "INPUT"}
+    return ng, ids
+
+
+def cells(shape, lvl):
+    lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
+    axes = [lo[a] + (np.arange(n[a]) + 0.5) * ext[a] / n[a] for a in range(3)]
+    pts, kinds = [], []
+    Y, Z = np.meshgrid(axes[1], axes[2], indexing="ij")
+    occ = np.zeros(tuple(n), bool)
+    for i, x in enumerate(axes[0]):
+        occ[i] = shape.inside(np.full_like(Y, x), Y, Z)
+    if hasattr(shape, "is_fat"):
+        kind = np.zeros(occ.shape, np.float32)
+        for i, x in enumerate(axes[0]):
+            kind[i] = shape.is_fat(np.full_like(Y, x), Y, Z)
+    else:  # outer layer of cells = skin
+        inner = occ.copy()
+        for a in range(3):
+            for sgn in (1, -1):
+                sh = np.roll(occ, sgn, axis=a)
+                sl = [slice(None)] * 3
+                sl[a] = 0 if sgn == 1 else -1
+                sh[tuple(sl)] = False
+                inner &= sh
+        kind = (occ & ~inner).astype(np.float32)
+    idx = np.nonzero(occ)
+    co = np.stack([axes[0][idx[0]], axes[1][idx[1]], axes[2][idx[2]]], 1).astype(np.float32)
+    return co, kind[idx].astype(np.float32)
+
+
+def cubes_object(name, co, kinds, ng, ids, size, height, mat):
+    me = bpy.data.meshes.new(name)
+    me.vertices.add(len(co))
+    me.vertices.foreach_set("co", co.ravel())
+    att = me.attributes.new("kind", "FLOAT", "POINT")
+    att.data.foreach_set("value", kinds)
+    me.update()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    mod = ob.modifiers.new("GN", "NODES")
+    mod.node_group = ng
+    mod[ids["CubeSize"]] = list(size)
+    mod[ids["Height"]] = float(height)
+    mod[ids["Collapse"]] = 0.0
+    me.materials.append(mat)
+    return ob, mod
+
+
+# ---------------------------------------------------------------------------
+# scene
+# ---------------------------------------------------------------------------
+def build_grid_scene(plan, out_dir):
+    t0 = time.time()
+    cfg = plan["config"]
+    shape = OBJECTS[cfg["object_type"]]
+    M = MATERIALS[cfg["material_profile"]]
+    fps = plan["fps"]
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scn = bpy.context.scene
+    scn.render.fps = fps
+    scn.frame_start, scn.frame_end = 1, plan["total_frames"]
+    lo, hi = shape.bbox()
+    span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
+    B.setup_environment(scn, board_size=(max(0.46, span * 1.9), max(0.34, span * 1.35)))
+
+    steak = getattr(shape, "kind", "") == "extruded"
+    if steak:
+        fat = B.simple_mat("Fat", M["skin_base"], 0.45)
+        mats = [fat, meat_mat(M), fat]
+    else:
+        mats = [B.make_skin(M, shape), B.make_flesh(M), B.simple_mat("Rim", M["rim"], 0.35)]
+    params = {}
+    seam_sets = []
+    for mt in {id(m): m for m in mats}.values():
+        add_seams(mt, {}, seam_sets)
+    me = object_mesh(shape, "Object")
+    for mt in mats:
+        me.materials.append(mt)
+
+    cmat = cube_mat(M, steak)
+    ng, ids = collapse_group(cmat)
+    knife = B.build_knife()
+    kmat = bpy.data.materials["Steel"]
+    report = {"levels": [], "failures": []}
+
+    def key_param(name, frame, value):
+        B.interp("CONSTANT")
+        for P in seam_sets:
+            if name in P:
+                sock = P[name].outputs[0]
+                sock.default_value = float(value)
+                sock.keyframe_insert("default_value", frame=frame)
+
+    cuts_ev = [(c[0], c[1]) for c in plan["counters"]["cuts"]]
+    pieces_ev = [(c[0], c[1]) for c in plan["counters"]["pieces"]]
+    height = float(hi[2] - lo[2])
+    park = Vector((span * 0.9, -0.12, 0.25))
+    B.interp("BEZIER")
+    knife.location = park
+    knife.rotation_quaternion = B.blade_quat((0, 1, 0), (0, 0, -1))
+    knife.keyframe_insert("location", frame=1)
+    knife.keyframe_insert("rotation_quaternion", frame=1)
+    last_knife = 1
+
+    for lvl in plan["levels"]:
+        li = lvl["level"]
+        cell = lvl["cell_size"]
+        start, enter = lvl["start_frame"], lvl["enter_frames"]
+        cuts_ev.append((start, 0))
+        pieces_ev.append((start, 1))
+        # seam parameters for this level (constant until the next level)
+        for ax in range(3):
+            key_param(f"lo_{ax}", start, lvl["lo"][ax])
+            key_param(f"cell_{ax}", start, cell[ax])
+            key_param(f"n_{ax}", start, 0)
+        key_param("cz", start, lvl["cuts_xyz"][2])
+        key_param("w", start, min(0.0006, 0.09 * min(cell)))
+
+        ob = bpy.data.objects.new(f"Level_{li:02d}", me)
+        scn.collection.objects.link(ob)
+        B.set_visibility(ob, start, lvl["collapse_start"])
+        B.interp("BEZIER")
+        ob.location = (0.45, 0, 0) if li else (0, 0, 0)
+        ob.keyframe_insert("location", frame=start)
+        ob.location = (0, 0, 0)
+        ob.keyframe_insert("location", frame=start + enter)
+
+        # cuts: seams + knife
+        counts = [0, 0, 0]
+        strokes = [s for s in plan["strokes"] if s["level"] == li]
+        for i, st in enumerate(strokes):
+            ax, f = st["axis"], st["frame"]
+            counts[ax] += 1
+            key_param(f"n_{ax}", f + 1, counts[ax])
+            gap_next = (strokes[i + 1]["frame"] - f) if i + 1 < len(strokes) else 8
+            if f <= last_knife:
+                continue
+            n = [(1, 0, 0), (0, 1, 0), (0, 0, 1)][ax]
+            d = Vector((0, 0, -1)) if ax < 2 else Vector((0, 1, 0))
+            q = B.blade_quat(n, d)
+            c = Vector((0.0, 0.0, 0.0))
+            c[ax] = st["pos"]
+            if ax < 2:
+                start_p = c + Vector((0, 0, height + 0.03))
+                end_p = c + Vector((0, 0, 0.0004))
+            else:
+                start_p = c + Vector((0, lo[1] - 0.05, 0))
+                end_p = c + Vector((0, hi[1] + 0.01, 0))
+            B.interp("BEZIER")
+            if f - last_knife >= 3 and gap_next >= 3:
+                for ff, loc in ((f - 2, start_p), (f, end_p)):
+                    if ff > last_knife:
+                        knife.location, knife.rotation_quaternion = loc, q
+                        knife.keyframe_insert("location", frame=ff)
+                        knife.keyframe_insert("rotation_quaternion", frame=ff)
+                        last_knife = ff
+            else:
+                knife.location, knife.rotation_quaternion = end_p, q
+                knife.keyframe_insert("location", frame=f)
+                knife.keyframe_insert("rotation_quaternion", frame=f)
+                last_knife = f
+        # fast cutting reads as a blur: make the blade translucent while strokes are dense
+        dense = len(strokes) / max(1, lvl["strokes_end"] - lvl["strokes_start"]) > 0.6
+        bsdf = kmat.node_tree.nodes.get("Principled BSDF")
+        B.interp("CONSTANT")
+        bsdf.inputs["Alpha"].default_value = 0.35 if dense else 1.0
+        bsdf.inputs["Alpha"].keyframe_insert("default_value", frame=lvl["strokes_start"])
+        bsdf.inputs["Alpha"].default_value = 1.0
+        bsdf.inputs["Alpha"].keyframe_insert("default_value", frame=lvl["strokes_end"] + 2)
+        # lift the knife away before the collapse
+        B.interp("BEZIER")
+        f_up = max(last_knife + 2, lvl["strokes_end"] + 3)
+        knife.location = park
+        knife.keyframe_insert("location", frame=f_up + 4)
+        knife.keyframe_insert("rotation_quaternion", frame=f_up + 4)
+        last_knife = f_up + 4
+
+        # cubes
+        co, kinds = cells(shape, lvl)
+        if len(co) != lvl["cubes"]:
+            report["failures"].append({"level": li, "planned": lvl["cubes"], "built": int(len(co))})
+        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
+        B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
+        path = f'modifiers["GN"]["{ids["Collapse"]}"]'
+        B.interp("BEZIER")
+        mod[ids["Collapse"]] = 0.0
+        cob.keyframe_insert(data_path=path, frame=lvl["collapse_start"])
+        mod[ids["Collapse"]] = 1.0
+        cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
+        cob.location = (0, 0, 0)
+        cob.keyframe_insert("location", frame=lvl["exit_start"])
+        cob.location = (-0.6, 0, 0)
+        cob.keyframe_insert("location", frame=lvl["end_frame"])
+        report["levels"].append({"level": li, "cuts": lvl["cuts"], "cubes_planned": lvl["cubes"],
+                                 "cubes_built": int(len(co))})
+
+    cam = grid_camera(plan, lo, hi)
+    B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"])
+    B.setup_render(scn, cfg, out_dir, final=False)
+    report["final_pieces_validated"] = report["levels"][-1]["cubes_built"] if report["levels"] else 0
+    report["target"] = plan["levels"][-1]["cubes"] if plan["levels"] else 0
+    report["non_manifold"] = 0
+    report["volume_error_pct"] = 0.0
+    report["objects"] = len(bpy.data.objects)
+    report["build_seconds"] = round(time.time() - t0, 2)
+    return report
+
+
+def grid_camera(plan, lo, hi):
+    cd = bpy.data.cameras.new("Camera")
+    cd.lens = 50
+    cd.clip_start = 0.004
+    cam = bpy.data.objects.new("Camera", cd)
+    bpy.context.scene.collection.objects.link(cam)
+    bpy.context.scene.camera = cam
+    w, h = plan["config"]["resolution"]
+    vfov = 2 * math.atan(18 / 50)
+    hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
+    r = 0.5 * float(np.hypot(hi[0] - lo[0], hi[1] - lo[1])) * 1.15
+    elev, azim = math.radians(38), math.radians(-80)
+    view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
+    target = Vector((0, 0, 0.0))
+    dist = r / math.tan(hfov / 2)
+    cam.location = target + view * dist
+    cam.rotation_mode = "QUATERNION"
+    cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
+    return cam

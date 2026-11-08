@@ -6,6 +6,10 @@ Chaque jour, la tâche planifiée Claude décide **une** vidéo, la lance sur Gi
 - `history/videos.jsonl` : une ligne par vidéo produite (config, hook, légende, statut, et — quand Saliou les ajoute — `views`, `likes`, `comments`).
 - Ce fichier (leviers, garde-fous).
 
+## Formats
+- **`grid` (format principal, ~5 jours sur 7)** : niveaux "N CUTS -> X CUBES". Un objet neuf par niveau, des coupes en grille qui augmentent, puis effondrement en cubes. Compteurs CUTS (haut) et CUBES (bas), exacts. Clés : `format: "grid"`, `cuts_sequence` (ex. [4, 10, 25, 60, 160, 400, 1000]), objet `steak` (validé en priorité), `cake`, `mango`. Jusqu'à ~1 000 coupes (≈ 12 millions de cubes) ; garder la vidéo entre 35 et 70 s (6 à 12 niveaux).
+- **`slices`** : découpe progressive en morceaux (2 → 25 000), compteurs CUTS et PIECES. Pour varier.
+
 ## Leviers d'engagement (choisir 1 angle principal par jour)
 1. **Nombre absurde** : 1 000, 5 000, 10 000, 25 000 morceaux. Le compteur est le héros. Hook du type "Can it reach 25,000 pieces?".
 2. **Devinette** : hook "Guess the final number" + end_text "Comment your guess for tomorrow" → appelle les commentaires.
@@ -22,7 +26,7 @@ Règles :
 - Légende : 1 phrase d'accroche + 1 question qui appelle un commentaire + 5 à 8 hashtags (#asmr #satisfying #oddlysatisfying #asmrsounds #3danimation ...).
 
 ## Garde-fous techniques
-- Objets validés visuellement : **mango**. `soap`, `jelly`, `chocolate` existent mais ne sont pas encore validés à l'œil : au plus 1 essai par semaine, et seulement après une vidéo mango réussie la veille.
+- Objets : `steak` = objet phare du format grid ; `mango` validé en slices. `soap`, `jelly`, `chocolate` existent mais ne sont pas encore validés à l'œil : au plus 1 essai par semaine, et seulement après une vidéo mango réussie la veille.
 - `target_piece_count` ≤ 25 000. Au-delà de 5 000, `quality: preview` (le rendu CPU dépasse sinon les 5 h de GitHub).
 - Si la dernière ligne de l'historique est `failed`, refaire une config sûre (mango, ≤ 400, preview) avant de reprendre les gros nombres.
 - `random_seed` = date du jour au format AAAAMMJJ.
