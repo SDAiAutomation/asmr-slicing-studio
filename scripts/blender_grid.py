@@ -134,7 +134,7 @@ def meat_group(M):
     L.new(gi.outputs["Vector"], mask.inputs["Vector"])
     mk = B.ramp(g, [(0.30, (0.15, 0.15, 0.15)), (0.60, (1, 1, 1))])
     L.new(mask.outputs["Fac"], mk.inputs["Fac"])
-    vr = B.ramp(g, [(0.0, (1, 1, 1)), (0.012, (1, 1, 1)), (0.03, (0, 0, 0))])
+    vr = B.ramp(g, [(0.0, (1, 1, 1)), (0.008, (1, 1, 1)), (0.022, (0, 0, 0))])
     L.new(band.outputs[0], vr.inputs["Fac"])
     vm = N.new("ShaderNodeMath")
     vm.operation = "MULTIPLY"
@@ -278,7 +278,14 @@ def cube_mat(M, steak):
     if steak:
         orig = nt.nodes.new("ShaderNodeAttribute")
         orig.attribute_type, orig.attribute_name = "INSTANCER", "orig"
-        _wire_meat(mat, nt, bsdf, M, orig.outputs["Vector"])
+        # shading point in the steak's original space = cube centre + local offset,
+        # so a big cube shows the real marbling that runs through it (not one flat colour)
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        add = nt.nodes.new("ShaderNodeVectorMath")
+        add.operation = "ADD"
+        L.new(orig.outputs["Vector"], add.inputs[0])
+        L.new(tc.outputs["Object"], add.inputs[1])
+        _wire_meat(mat, nt, bsdf, M, add.outputs["Vector"])
         # fat-cap cubes: creamy white instead of muscle
         link = next(l for l in nt.links if l.to_socket == bsdf.inputs["Base Color"])
         m, f, a, b, o = B.mix_rgb(nt)
