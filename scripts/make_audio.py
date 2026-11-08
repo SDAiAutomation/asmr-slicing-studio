@@ -138,12 +138,23 @@ def render(plan, out_dir):
     xs = [h["plane_point"][0] + h["offset"][0] for h in plan["hits"]] or [0]
     span = max(0.05, max(abs(min(xs)), abs(max(xs))))
 
+    # Dense strokes cut several pieces in the same frame: one richer sound per frame
+    # instead of hundreds of stacked transients (which would turn into white noise).
+    groups = {}
     for h in plan["hits"]:
+        groups.setdefault(h["contact_frame"], []).append(h)
+    root_vol = max(1e-9, plan["pieces"][0]["volume"])
+    for cf in sorted(groups):
+        g = groups[cf]
+        h = g[0]
+        nh = len(g)
         t0, t1 = t_of(h["contact_frame"]), t_of(h["exit_frame"])
         dur = max(0.03, t1 - t0)
-        pan = float(np.clip((h["plane_point"][0] + h["offset"][0]) / span * 0.6, -0.7, 0.7))
-        size = (h["piece_volume"] / max(1e-9, plan["pieces"][0]["volume"])) ** (1 / 3)
-        loud = 0.55 + 0.45 * size          # small pieces are quieter
+        px = float(np.mean([x["plane_point"][0] + x["offset"][0] for x in g]))
+        pan = float(np.clip(px / span * 0.6, -0.7, 0.7))
+        size = (sum(x["piece_volume"] for x in g) / root_vol) ** (1 / 3)
+        loud = min(1.0, 0.55 + 0.45 * size)   # small pieces are quieter
+        loud *= 1.0 if nh == 1 else min(1.25, 0.8 + 0.12 * np.log2(nh))
         var = rng.uniform(0.85, 1.15)
 
         # 1. blade contact
@@ -164,7 +175,7 @@ def render(plan, out_dir):
             sq = bandnoise(rng, n, *b["squish"]) * b["squish_gain"]
             sq *= 0.6 + 0.4 * np.sin(np.linspace(0, np.pi * rng.uniform(2, 5), n)) ** 2
             cr = np.zeros(n)
-            k = rng.poisson(b["crackle"] * dur)
+            k = rng.poisson(b["crackle"] * dur * (1 + 0.5 * np.log2(nh)))
             for pos in rng.integers(0, max(1, n - 200), size=k):
                 m = int(rng.integers(40, 160))
                 cr[pos:pos + m] += rng.standard_normal(m) * np.exp(-np.arange(m) / 25)

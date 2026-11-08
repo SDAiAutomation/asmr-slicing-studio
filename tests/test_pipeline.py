@@ -42,6 +42,17 @@ def test_progression_reaches_target_and_is_progressive():
         assert len(p["strokes"]) >= 5, "a single global cut is not a progression"
 
 
+def test_dense_strokes_scale_to_thousands():
+    p = P(target_piece_count=2500)
+    assert len(leaves(p)) == 2500
+    assert p["duration_s"] < 60, "dense phases must be accelerated, not one cut per beat"
+    frames = [h["contact_frame"] for h in p["hits"]]
+    assert len(set(frames)) < len(frames), "several cuts share a frame in dense strokes"
+    counts = {s["count_after"] for s in p["strokes"]}
+    for m in (100, 400, 1000, 2500):
+        assert m in counts
+
+
 def test_milestones_of_auto_sequence_are_visible():
     p = P(target_piece_count=15)
     counts = {s["count_after"] for s in p["strokes"]}
@@ -144,7 +155,7 @@ def test_audio_sync_and_levels():
         assert abs(dur - p["total_frames"] / p["fps"]) < 0.05
         assert info["clipped_samples"] == 0 and info["peak_dbfs"] <= -0.9
         contacts = sorted(e["t"] for e in ev if e["type"] == "contact")
-        expected = sorted((h["contact_frame"] - 1) / p["fps"] for h in p["hits"])
+        expected = sorted({(h["contact_frame"] - 1) / p["fps"] for h in p["hits"]})
         assert np.allclose(contacts, expected, atol=1e-6)
         types = {e["type"] for e in ev}
         assert types == {"contact", "penetration", "traversal", "end_of_cut",

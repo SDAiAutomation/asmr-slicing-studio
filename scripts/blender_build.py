@@ -562,40 +562,43 @@ def animate_knife(knife, plan, pieces, keys_of):
     prev_q = knife.rotation_quaternion.copy()
     last = 1
     hits = plan["hits"]
+
+    def key(f, loc, q):
+        knife.location = loc
+        knife.rotation_quaternion = q
+        knife.keyframe_insert("location", frame=f)
+        knife.keyframe_insert("rotation_quaternion", frame=f)
+
     for i, h in enumerate(hits):
+        c0, c1 = h["contact_frame"], h["exit_frame"]
+        if c0 <= last:  # dense wave: several pieces in this frame, knife follows the first
+            continue
         n, d = Vector(h["plane_normal"]), Vector(h["travel"])
         q = blade_quat(n, d)
         if q.dot(prev_q) < 0:
             q.negate()
         c = Vector(h["plane_point"]) + Vector(h["offset"])
         ext = h["extent_travel"]
-        # blade x-offset: piece sits near the middle of the edge
-        x_axis = q.to_matrix().col[0]
-        shift = -x_axis * 0.02
+        shift = -q.to_matrix().col[0] * 0.02
         start = c - d * (ext + 0.004) + shift
         end = c + d * (ext + 0.004) + shift
         if d.z < -0.2:  # coming down: stop on the board surface (z = 0)
-            s = (c.z - 0.0004) / -d.z
-            end = c + d * s + shift
-        c0, c1 = h["contact_frame"], h["exit_frame"]
-        lead = max(1, min(6, c0 - last - 1))
-        hover = start - d * 0.03
-        for f, loc in ((c0 - lead, hover), (c0, start), (c1, end)):
-            if f <= last and f != 1:
-                f = last + 1
-            knife.location = loc
-            knife.rotation_quaternion = q
-            knife.keyframe_insert("location", frame=f)
-            knife.keyframe_insert("rotation_quaternion", frame=f)
-            last = f
+            end = c + d * ((c.z - 0.0004) / -d.z) + shift
+        gap = c0 - last
+        if gap >= 4:
+            lead = min(6, gap - 2)
+            key(c0 - lead, start - d * 0.03, q)
+            key(c0, start, q)
+            key(c1, end, q)
+            last = c1
+        else:  # fast chopping: one key per frame, blade through the piece
+            key(c0, end, q)
+            last = c0
         prev_q = q
         nxt = hits[i + 1]["contact_frame"] if i + 1 < len(hits) else None
-        if nxt is None or nxt - c1 > 8:
-            f = c1 + 4
-            knife.location = end - d * 0.05
-            knife.keyframe_insert("location", frame=f)
-            knife.keyframe_insert("rotation_quaternion", frame=f)
-            last = f
+        if (nxt is None or nxt - last > 8) and last == c1:
+            key(c1 + 4, end - d * 0.05, q)
+            last = c1 + 4
     end_f = plan["total_frames"]
     knife.location = park
     knife.keyframe_insert("location", frame=max(last + 10, end_f - 20))
@@ -665,13 +668,36 @@ def build_overlay(cam, cfg, M, counter_events, total):
     if cfg["show_counter"]:
         text_obj("PiecesWord", "PIECES", half_h * 0.05, (0, half_h * 0.57, -D), cam, white)
         # one text object per validated count value, switched on/off in time
-        ev = sorted(counter_events)
+        per_frame = {}
+        for f, c in sorted(counter_events):
+            per_frame[f] = c  # last value reached in that frame
+        ev = sorted(per_frame.items())
         for i, (f, c) in enumerate(ev):
             nxt = ev[i + 1][0] if i + 1 < len(ev) else None
-            ob = text_obj(f"Count_{i:04d}", str(c), half_h * 0.13, (0, half_h * 0.68, -D), cam, white)
+            ob = text_obj(f"Count_{i:05d}", f"{c:,}".replace(",", " "), half_h * 0.13, (0, half_h * 0.68, -D), cam, white)
             set_visibility(ob, f, nxt)
+    fps = bpy.context.scene.render.fps
+    if cfg.get("hook_text"):
+        ob = text_obj("Hook", cfg["hook_text"], half_h * 0.07, (0, -half_h * 0.62, -D), cam, accent)
+        ob.data.body = _wrap(cfg["hook_text"], 22)
+        set_visibility(ob, 1, int(3.0 * fps))
+    if cfg.get("end_text"):
+        ob = text_obj("EndText", _wrap(cfg["end_text"], 22), half_h * 0.07, (0, -half_h * 0.62, -D), cam, accent)
+        set_visibility(ob, max(2, total - int(2.5 * fps)), None)
     if cfg["watermark"]:
         text_obj("Watermark", cfg["watermark"], half_h * 0.045, (0, -half_h * 0.86, -D), cam, white)
+
+
+def _wrap(text, width):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    lines.append(cur)
+    return "\n".join(lines)
 
 
 def setup_render(scn, cfg, out_dir, final):

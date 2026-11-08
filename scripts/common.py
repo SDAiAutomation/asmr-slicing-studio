@@ -33,10 +33,12 @@ DEFAULTS = {
     "random_seed": 42,
     "watermark": "",                   # e.g. "@mychannel"; empty -> none
     "show_counter": True,
+    "hook_text": "",                   # big question shown during the opening seconds
+    "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
     "grid_resolution": None,           # None -> auto from target count
 }
 
-AUTO_SEQUENCE = [2, 3, 4, 5, 8, 10, 15, 25, 50, 100, 200, 400, 800, 1600]
+AUTO_SEQUENCE = [2, 3, 4, 5, 8, 10, 15, 25, 50, 100, 200, 400, 1000, 2500, 5000, 10000, 25000, 50000]
 
 DIRECTION_NAMES = ["vertical", "horizontal", "diagonal", "cross", "angled", "random3d"]
 
@@ -59,6 +61,8 @@ def validate_config(cfg):
     n = cfg["target_piece_count"]
     if not isinstance(n, int) or n < 2:
         raise ValueError("target_piece_count must be an integer >= 2")
+    if n > 50000:
+        raise ValueError("target_piece_count above 50000 is not supported (render time/memory)")
     if cfg["object_type"] not in OBJECTS:
         raise ValueError(f"object_type must be one of {list(OBJECTS)}")
     cfg["material_profile"] = cfg["material_profile"] or cfg["object_type"]
@@ -80,7 +84,8 @@ def validate_config(cfg):
         raise ValueError(f"progression_sequence must be strictly increasing and >= 2: {seq}")
     cfg["progression_sequence"] = seq
     if cfg["grid_resolution"] is None:
-        cfg["grid_resolution"] = 72 if n <= 60 else (96 if n <= 200 else 128)
+        # ~60 voxels per final piece on average (inside volume ~ 0.23 * res^3)
+        cfg["grid_resolution"] = int(max(72, min(240, round((60 * n / 0.23) ** (1 / 3)))))
     return cfg
 
 

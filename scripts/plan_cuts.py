@@ -24,6 +24,7 @@ from common import OBJECTS, MATERIALS, direction_vector, load_config
 
 MIN_VOX = 6          # smallest voxel count we allow a piece to have
 NOISE_VOX = 3        # connected bits smaller than this are voxel noise
+DENSE_K = 12         # above this many cuts in one stroke, cuts overlap in time
 
 
 class Grid:
@@ -56,8 +57,10 @@ class Grid:
         labels = lab[tuple(sub.T)]
         comps = [idx[labels == k] for k in range(1, n + 1)]
         comps.sort(key=len, reverse=True)
-        big = [c for c in comps if len(c) >= NOISE_VOX]
-        noise = [c for c in comps if len(c) < NOISE_VOX]
+        # fragments under 4 % of the half are voxel staircase artefacts, not real parts
+        thr = max(NOISE_VOX, int(0.04 * len(idx)), 2 * MIN_VOX)
+        big = [c for c in comps if len(c) >= thr] or comps[:1]
+        noise = [c for c in comps if len(c) < thr and c is not big[0]]
         if noise:  # voxel staircase noise -> attach to the largest part
             big[0] = np.concatenate([big[0]] + noise)
         return big
@@ -186,7 +189,7 @@ def plan(cfg):
         if li > 0:
             root.add_key(frame + int(0.6 * fps), [0, 0, 0])
             frame += int(0.6 * fps)
-        alive = [root]
+        alive = {root.id: root}
         all_pieces.append(root)
         counter.append({"frame": frame if li else 1, "count": 1, "level": li})
         lvl_start = frame
@@ -209,11 +212,11 @@ def plan(cfg):
             dname = dirs[stroke_no % len(dirs)]
             n_dir = direction_vector(dname, stroke_no, rng)
             need = stroke_target - len(alive)
-            cand = sorted([p for p in alive if len(p.idx) >= 2 * MIN_VOX],
+            cand = sorted([p for p in alive.values() if len(p.idx) >= 2 * MIN_VOX],
                           key=lambda p: -len(p.idx))
             if not cand:
                 break
-            chosen = cand[:need + 3]   # spares in case a piece refuses a clean cut
+            chosen = cand[:need + need // 4 + 3]   # spares in case a piece refuses a clean cut
             # sweep order: knife walks across the board instead of jumping around
             sweep = np.cross(np.array([0, 0, 1.0]), n_dir)
             if np.linalg.norm(sweep) < 1e-3:
@@ -221,15 +224,25 @@ def plan(cfg):
             chosen.sort(key=lambda p: float((p.centroid + p.offset_at(frame)) @ sweep))
 
             k = min(len(chosen), need)
-            spacing = max(min_space, int(round(fps * max(0.07, s0 * k ** -0.45))))
-            traverse = max(2, int(round(spacing * 0.6)))
+            # sparse strokes: one visible cut after another; dense strokes: a slicing
+            # wave across the board, several pieces per frame, bounded stroke length
+            dense = k > DENSE_K
+            if dense:
+                stroke_frames = int(min(fps * 2.4, max(fps * 0.9, fps * (0.5 + 0.2 * math.log2(k)))))
+                spacing, traverse = 0, 2
+            else:
+                spacing = max(min_space, int(round(fps * max(0.07, s0 * k ** -0.45))))
+                traverse = max(2, int(round(spacing * 0.6)))
             frame += pre
+            stroke_start = frame
             stroke = {"index": stroke_no, "direction": dname, "normal": n_dir.tolist(),
                       "start_frame": frame, "milestone": milestone, "hits": []}
             e_now = explode_factor(len(alive) + k, mat["separation"])
-            for p in chosen:
+            for i_hit, p in enumerate(chosen):
                 if len(alive) >= stroke_target:
                     break
+                if dense:
+                    frame = stroke_start + (min(i_hit, k - 1) * stroke_frames) // k
                 n, fb = choose_plane(p, grid, n_dir)
                 if n is None:
                     continue
@@ -257,8 +270,9 @@ def plan(cfg):
                     kids.append(c)
                     all_pieces.append(c)
                 p.children = [c.id for c in kids]
-                alive.remove(p)
-                alive.extend(kids)
+                del alive[p.id]
+                for c in kids:
+                    alive[c.id] = c
                 hit = {"stroke": stroke_no, "piece": p.id, "children": p.children,
                        "plane_point": p.centroid.tolist(), "plane_normal": n.tolist(),
                        "fallback_axis": bool(fb), "travel": travel.tolist(),
@@ -271,16 +285,19 @@ def plan(cfg):
                 stroke["hits"].append(len(hits) - 1)
                 counter.append({"frame": exit_f, "count": len(alive), "level": li})
                 frame += spacing
+            if dense:
+                frame = stroke_start + stroke_frames
+            stroke["dense"] = dense
             frame += traverse + post
             # settle every piece of this level to the new explode factor
             e_after = explode_factor(len(alive), mat["separation"])
-            for q in alive:
+            for q in alive.values():
                 q.add_key(frame - post // 2, q.offset_at(frame - post // 2))
                 q.add_key(frame, np.array([*(q.centroid[:2] * e_after), 0.0]) + level_shift)
             stroke["end_frame"] = frame
             stroke["count_after"] = len(alive)
             strokes.append(stroke)
-            camera.append(_frame_camera(alive, grid, frame, stroke["start_frame"]))
+            camera.append(_frame_camera(list(alive.values()), grid, frame, stroke["start_frame"]))
             stroke_no += 1
 
         level_info.append({"level": li, "start": lvl_start, "end": frame,
@@ -288,7 +305,7 @@ def plan(cfg):
         if cfg["cutting_mode"] == "levels" and li < len(levels) - 1:
             # slide the finished level off the board, nothing just vanishes
             out_f = frame + int(0.6 * fps)
-            for q in alive:
+            for q in alive.values():
                 q.add_key(frame, q.offset_at(frame))
                 q.add_key(out_f, q.offset_at(frame) + np.array([-0.6, 0, 0]))
                 q.hide_frame = out_f + 1
