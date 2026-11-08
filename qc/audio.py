@@ -137,7 +137,9 @@ def main(tl_path, out_path):
             # rewind whoosh, then the break again, pitched down and stretched (slow motion)
             m = int(0.5 * SR)
             tm = np.arange(m) / SR
-            add(lp(rng.standard_normal(m), 0.05 + 0.25 * tm / 0.5) * (tm / 0.5) ** 2, e["t0"] - 0.1, 0.35)
+            wn = rng.standard_normal(m)
+            k = tm / 0.5                                   # filter opens up as the whoosh rises
+            add(((1 - k) * lp(wn, 0.05) + k * lp(wn, 0.3)) * k ** 2, e["t0"] - 0.1, 0.35)
             n = int(2.0 * SR)
             t = np.arange(n) / SR
             boom = np.sin(2 * np.pi * (40 - 15 * t) * t) * env(n, 0.01, 0.55)
