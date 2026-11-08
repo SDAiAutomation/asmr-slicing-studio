@@ -845,22 +845,26 @@ def _counter(cam, name, events, size, y, D, mat):
 
 
 def build_overlay(cam, cfg, cuts_events, pieces_events, total):
-    """Two counters in every format: CUTS on top, PIECES/CUBES at the bottom."""
+    """Two counters in every format: CUTS on top, PIECES/CUBES under the object.
+
+    Positions stay inside the TikTok/Reels safe zone: the top ~13 % (search bar, tabs)
+    and the bottom ~25 % (username, caption) are covered by the app UI on a phone.
+    y is in units of the frame half-height: +1 = top edge, -1 = bottom edge."""
     white = simple_mat("Overlay", (1, 1, 1), 1.0, 0.0, emit=(1, 1, 1))
     accent = simple_mat("OverlayAccent", (1, 0.75, 0.3), 1.0, 0.0, emit=(1, 0.72, 0.25))
     D = 0.1
     hh = D * math.tan(math.atan(18 / 50))
     fps = bpy.context.scene.render.fps
     if cfg["show_counter"]:
-        _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.76, D, white)
-        text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.62, -D), cam, accent)
-        _counter(cam, "Pieces", pieces_events, hh * 0.085, -hh * 0.72, D, white)
-        text_obj("PiecesWord", cfg["label_pieces"], hh * 0.045, (0, -hh * 0.81, -D), cam, accent)
+        _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.60, D, white)
+        text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
+        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, white)
+        text_obj("PiecesWord", cfg["label_pieces"], hh * 0.05, (0, -hh * 0.48, -D), cam, accent)
     if cfg.get("hook_text"):
-        ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.47, -D), cam, white)
+        ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.31, -D), cam, white)
         set_visibility(ob, 1, int(3.0 * fps))
     if cfg.get("end_text"):
-        ob = text_obj("EndText", _wrap(cfg["end_text"], 22), hh * 0.065, (0, hh * 0.47, -D), cam, white)
+        ob = text_obj("EndText", _wrap(cfg["end_text"], 22), hh * 0.065, (0, hh * 0.31, -D), cam, white)
         set_visibility(ob, max(2, total - int(2.5 * fps)), None)
     if cfg["watermark"]:
         text_obj("Watermark", cfg["watermark"], hh * 0.035, (0, -hh * 0.58, -D), cam, white)
