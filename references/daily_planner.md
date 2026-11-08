@@ -38,3 +38,8 @@ Règles :
 - `target_piece_count` ≤ 25 000. Au-delà de 5 000, `quality: preview` (le rendu CPU dépasse sinon les 5 h de GitHub).
 - Si la dernière ligne de l'historique est `failed`, refaire une config sûre (mango, ≤ 400, preview) avant de reprendre les gros nombres.
 - `random_seed` = date du jour au format AAAAMMJJ.
+
+## Format « Contrôle Qualité » (workflow `qc-render.yml`, voir `qc/README.md`)
+- Essai presse/traction en 2 manches, ~60 s, textes **en français**. Une config par épisode dans `assets/configs/qc/`.
+- Règle absolue : chaque chiffre vient d'une source publiée (norme, étude) citée dans `source`. Pas de source fiable → pas d'épisode.
+- Fin de vidéo : « PROCHAIN TEST ? Écris l'objet » → le prochain objet est pris dans les commentaires quand Saliou les rapporte.
