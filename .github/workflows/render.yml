@@ -34,6 +34,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # lets finalize delete intermediate artifacts (public repo)
 
 concurrency:
   group: render-${{ github.ref }}
@@ -104,7 +105,7 @@ jobs:
         with:
           name: workdir
           path: work/
-          retention-days: 2
+          retention-days: 1
 
   render:
     needs: prepare
@@ -132,7 +133,7 @@ jobs:
         with:
           name: frames-${{ steps.sid.outputs.id }}
           path: work/frames/*.png
-          retention-days: 2
+          retention-days: 1
 
   finalize:
     needs: [prepare, render]
@@ -179,6 +180,7 @@ jobs:
             rclone copyto work/caption.txt "${REMOTE}${NAME}_caption.txt" --drive-root-folder-id "$DRIVE_FOLDER_ID"
           fi
           echo "Uploaded ${NAME} to Google Drive"
+          echo "DRIVE_OK=1" >> "$GITHUB_ENV"
 
       - name: Drive upload skipped
         if: env.RCLONE_CONF == ''
@@ -216,16 +218,32 @@ jobs:
           git commit -m "history: run ${GITHUB_RUN_NUMBER} (${VIDEO_TAG})" || exit 0
           for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 5; done
 
+      # Public repo: the video itself is only kept on GitHub when Drive upload did not happen
+      - uses: actions/upload-artifact@v4
+        if: always() && env.DRIVE_OK != '1'
+        with:
+          name: asmr-${{ needs.prepare.outputs.tag }}-${{ github.run_number }}-video
+          path: work/*.mp4
+          if-no-files-found: ignore
+          retention-days: 3
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: asmr-${{ needs.prepare.outputs.tag }}-${{ github.run_number }}
+          name: asmr-${{ needs.prepare.outputs.tag }}-${{ github.run_number }}-reports
           path: |
-            work/*.mp4
             work/previews/
             work/*.json
-            work/caption.txt
-            work/soundtrack.wav
             work/blender.log
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 3
+
+      - name: Delete intermediate artifacts (scene + raw frames)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+                        --jq '.artifacts[] | select(.name == "workdir" or (.name | startswith("frames-"))) | .id'); do
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/$id" && echo "deleted $id"
+          done
