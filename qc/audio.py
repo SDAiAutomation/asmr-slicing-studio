@@ -133,6 +133,20 @@ def main(tl_path, out_path):
                 m = int(0.45 * SR)
                 tm = np.arange(m) / SR
                 add(lp(rng.standard_normal(m), 0.08) * env(m, 0.01, 0.12) * (1 + 0.6 * np.sin(2 * np.pi * 23 * tm)), t_b + 0.05, 1.2)
+        elif ty == "replay":
+            # rewind whoosh, then the break again, pitched down and stretched (slow motion)
+            m = int(0.5 * SR)
+            tm = np.arange(m) / SR
+            add(lp(rng.standard_normal(m), 0.05 + 0.25 * tm / 0.5) * (tm / 0.5) ** 2, e["t0"] - 0.1, 0.35)
+            n = int(2.0 * SR)
+            t = np.arange(n) / SR
+            boom = np.sin(2 * np.pi * (40 - 15 * t) * t) * env(n, 0.01, 0.55)
+            rumble = lp(rng.standard_normal(n), 0.03) * env(n, 0.02, 0.6)
+            add(boom, e["tbreak"], 0.9)
+            add(rumble, e["tbreak"], 1.4)
+            for _ in range(10):
+                mm = int(0.08 * SR)
+                add(lp(rng.standard_normal(mm), 0.08) * np.exp(-np.arange(mm) / (0.02 * SR)), e["tbreak"] + rng.uniform(0.1, 0.9), 0.5)
         elif ty == "stamp":
             t0 = e["t"] + 0.17
             n = int(0.6 * SR)
