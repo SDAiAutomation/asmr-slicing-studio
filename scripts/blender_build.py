@@ -364,24 +364,139 @@ def blade_quat(n, d):
 # ---------------------------------------------------------------------------
 # scene
 # ---------------------------------------------------------------------------
+ASSETS = os.path.join(HERE, "..", "assets", "cache")
+
+
+def _asset(name):
+    p = os.path.join(ASSETS, name)
+    return p if os.path.exists(p) else None
+
+
+def board_material():
+    """Photo-scanned wood (Poly Haven, CC0) when available, procedural grain otherwise."""
+    mat, nt, bsdf = principled("Board")
+    L = nt.links
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    mp = nt.nodes.new("ShaderNodeMapping")
+    mp.inputs["Scale"].default_value = (2.2, 2.2, 2.2)
+    L.new(tc.outputs["Object"], mp.inputs["Vector"])
+    diff = _asset("wood_diff.jpg")
+    if diff:
+        def img(path, colorspace):
+            t = nt.nodes.new("ShaderNodeTexImage")
+            t.image = bpy.data.images.load(path, check_existing=True)
+            t.image.colorspace_settings.name = colorspace
+            t.projection = "BOX"
+            t.projection_blend = 0.2
+            L.new(mp.outputs["Vector"], t.inputs["Vector"])
+            return t
+        L.new(img(diff, "sRGB").outputs["Color"], bsdf.inputs["Base Color"])
+        if _asset("wood_rough.jpg"):
+            L.new(img(_asset("wood_rough.jpg"), "Non-Color").outputs["Color"], bsdf.inputs["Roughness"])
+        if _asset("wood_nor.jpg"):
+            nm = nt.nodes.new("ShaderNodeNormalMap")
+            nm.inputs["Strength"].default_value = 0.6
+            L.new(img(_asset("wood_nor.jpg"), "Non-Color").outputs["Color"], nm.inputs["Color"])
+            L.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+    else:
+        wave = nt.nodes.new("ShaderNodeTexWave")
+        wave.bands_direction = "X"
+        set_input(wave, "Scale", 18.0)
+        set_input(wave, "Distortion", 2.5)
+        set_input(wave, "Detail", 8.0)
+        set_input(wave, "Detail Roughness", 0.7)
+        sc = nt.nodes.new("ShaderNodeMapping")
+        sc.inputs["Scale"].default_value = (0.25, 4.0, 4.0)  # long grain along the board
+        L.new(mp.outputs["Vector"], sc.inputs["Vector"])
+        L.new(sc.outputs["Vector"], wave.inputs["Vector"])
+        r = ramp(nt, [(0.0, (0.42, 0.25, 0.12)), (0.6, (0.55, 0.36, 0.19)), (1.0, (0.36, 0.20, 0.09))])
+        L.new(wave.outputs["Fac"], r.inputs["Fac"])
+        L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
+        set_input(bsdf, "Roughness", 0.55)
+        bump = nt.nodes.new("ShaderNodeBump")
+        set_input(bump, "Strength", 0.08)
+        L.new(wave.outputs["Fac"], bump.inputs["Height"])
+        L.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    return mat
+
+
+def cutting_board(size, thick=0.022, radius=0.028):
+    """Rounded-corner cutting board, bevelled edges, a handle hole at one end."""
+    import numpy as np
+    w, d = size
+    pts = []
+    for cx, cy, a0 in ((w / 2 - radius, d / 2 - radius, 0), (-w / 2 + radius, d / 2 - radius, 90),
+                       (-w / 2 + radius, -d / 2 + radius, 180), (w / 2 - radius, -d / 2 + radius, 270)):
+        for k in range(10):
+            a = math.radians(a0 + 90 * k / 9)
+            pts.append((cx + radius * math.cos(a), cy + radius * math.sin(a)))
+    bm = bmesh.new()
+    bot = [bm.verts.new((x, y, -thick)) for x, y in pts]
+    top = [bm.verts.new((x, y, 0.0)) for x, y in pts]
+    bm.faces.new(list(reversed(bot)))
+    bm.faces.new(top)
+    n = len(pts)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((bot[i], bot[j], top[j], top[i]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new("Board")
+    bm.to_mesh(me)
+    bm.free()
+    board = bpy.data.objects.new("Board", me)
+    bpy.context.scene.collection.objects.link(board)
+    bev = board.modifiers.new("Bevel", "BEVEL")
+    bev.width, bev.segments, bev.limit_method = 0.004, 4, "ANGLE"
+    # handle hole: a capsule-shaped boolean near the right end
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.011, depth=0.1, location=(w / 2 - 0.035, 0, 0))
+    cut = bpy.context.object
+    cut.name = "HandleCutter"
+    cut.scale = (1.0, 2.2, 1.0)
+    cut.hide_render = True
+    cut.hide_viewport = True
+    boo = board.modifiers.new("Hole", "BOOLEAN")
+    boo.object = cut
+    boo.operation = "DIFFERENCE"
+    board.modifiers.move(board.modifiers.find("Hole"), 0)
+    for f in me.polygons:
+        f.use_smooth = False
+    board.data.materials.append(board_material())
+    return board
+
+
 def setup_environment(scn, board_size=(0.46, 0.34)):
-    """Wooden board, dark backdrop, soft studio lights."""
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, -0.011))
-    board = bpy.context.object
-    board.name = "Board"
-    board.scale = (board_size[0], board_size[1], 0.02)
-    board.data.materials.append(wood_mat())
-    bpy.ops.object.modifier_add(type="BEVEL")
-    board.modifiers[-1].width = 0.004
-    board.modifiers[-1].segments = 3
-    bpy.ops.mesh.primitive_plane_add(size=8, location=(0, 0, -0.022))
+    """Realistic tabletop: wooden cutting board on a dark surface, studio HDRI light."""
+    board = cutting_board(board_size)
+    bpy.ops.mesh.primitive_plane_add(size=6, location=(0, 0, -0.0221))
     floor = bpy.context.object
-    floor.data.materials.append(simple_mat("Backdrop", (0.018, 0.02, 0.024), 0.8))
+    floor.name = "Table"
+    floor.data.materials.append(simple_mat("Table", (0.035, 0.032, 0.038), 0.65))
     world = bpy.data.worlds.new("World")
     scn.world = world
     world.use_nodes = True
-    world.node_tree.nodes["Background"].inputs[0].default_value = (0.012, 0.013, 0.016, 1)
-    world.node_tree.nodes["Background"].inputs[1].default_value = 0.25
+    nt = world.node_tree
+    bg = nt.nodes["Background"]
+    out = nt.nodes["World Output"]
+    hdr = _asset("studio.hdr")
+    if hdr:
+        env = nt.nodes.new("ShaderNodeTexEnvironment")
+        env.image = bpy.data.images.load(hdr, check_existing=True)
+        nt.links.new(env.outputs["Color"], bg.inputs["Color"])
+        bg.inputs["Strength"].default_value = 0.9
+        # the camera sees a dark studio, the objects receive the real HDRI light
+        dark = nt.nodes.new("ShaderNodeBackground")
+        dark.inputs["Color"].default_value = (0.012, 0.012, 0.016, 1)
+        lp = nt.nodes.new("ShaderNodeLightPath")
+        mix = nt.nodes.new("ShaderNodeMixShader")
+        nt.links.new(lp.outputs["Is Camera Ray"], mix.inputs["Fac"])
+        nt.links.new(bg.outputs["Background"], mix.inputs[1])
+        nt.links.new(dark.outputs["Background"], mix.inputs[2])
+        nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+        key_power, rim_power = 7, 9
+    else:
+        bg.inputs[0].default_value = (0.012, 0.013, 0.016, 1)
+        bg.inputs[1].default_value = 0.25
+        key_power, rim_power = 16, 12
 
     def area(name, loc, power, size, color=(1, 0.97, 0.92)):
         ld = bpy.data.lights.new(name, "AREA")
@@ -393,10 +508,10 @@ def setup_environment(scn, board_size=(0.46, 0.34)):
         ob.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
         return ob
 
-    # moody studio: one soft key, a weak cool fill, a rim light for the edges
-    area("Key", (-0.45, -0.35, 0.55), 16, 0.45)
-    area("Fill", (0.55, -0.45, 0.30), 3, 0.6, (0.85, 0.9, 1.0))
-    area("Rim", (0.10, 0.60, 0.45), 12, 0.35)
+    area("Key", (-0.45, -0.35, 0.55), key_power, 0.45)
+    area("Rim", (0.10, 0.60, 0.45), rim_power, 0.35)
+    if not hdr:
+        area("Fill", (0.55, -0.45, 0.30), 3, 0.6, (0.85, 0.9, 1.0))
     return board
 
 

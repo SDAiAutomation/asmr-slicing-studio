@@ -34,6 +34,14 @@ runs:
       run: |
         mkdir -p ~/blender
         curl -fsSL "${{ steps.bl.outputs.url }}" | tar -xJ -C ~/blender --strip-components=1
+    - name: Cache photo assets (Poly Haven, CC0)
+      uses: actions/cache@v4
+      with:
+        path: assets/cache
+        key: polyhaven-v1
+    - name: Fetch photo assets
+      shell: bash
+      run: python scripts/fetch_assets.py assets/cache || true
     - name: Export BLENDER_PATH
       shell: bash
       run: |

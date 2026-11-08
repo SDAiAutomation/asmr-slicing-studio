@@ -310,7 +310,9 @@ def build_grid_scene(plan, out_dir):
     scn.frame_start, scn.frame_end = 1, plan["total_frames"]
     lo, hi = shape.bbox()
     span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
-    B.setup_environment(scn, board_size=(max(0.46, span * 1.9), max(0.34, span * 1.35)))
+    board_w = max(0.36, span * 1.75)
+    board_size = (board_w, board_w * 0.66)
+    B.setup_environment(scn, board_size=board_size)
 
     steak = getattr(shape, "kind", "") == "extruded"
     if steak:
@@ -469,7 +471,7 @@ def build_grid_scene(plan, out_dir):
         cuts_ev.append((lf, 0, li0["cuts"]))
         pieces_ev.append((lf, 1))
 
-    cam = grid_camera(plan, lo, hi)
+    cam = grid_camera(plan, lo, hi, board_size)
     B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"])
     B.setup_render(scn, cfg, out_dir, final=False)
     report["final_pieces_validated"] = report["levels"][-1]["cubes_built"] if report["levels"] else 0
@@ -481,7 +483,8 @@ def build_grid_scene(plan, out_dir):
     return report
 
 
-def grid_camera(plan, lo, hi):
+def grid_camera(plan, lo, hi, board_size):
+    """Whole board in frame (~92 % of the width), object centred, slight depth of field."""
     cd = bpy.data.cameras.new("Camera")
     cd.lens = 50
     cd.clip_start = 0.004
@@ -491,12 +494,15 @@ def grid_camera(plan, lo, hi):
     w, h = plan["config"]["resolution"]
     vfov = 2 * math.atan(18 / 50)
     hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
-    r = 0.5 * float(np.hypot(hi[0] - lo[0], hi[1] - lo[1])) * 1.15
-    elev, azim = math.radians(38), math.radians(-80)
+    half_w = board_size[0] / 2 / 0.92
+    elev, azim = math.radians(34), math.radians(-90)
     view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
-    target = Vector((0, 0, 0.0))
-    dist = r / math.tan(hfov / 2)
+    target = Vector((0, 0.01, 0.01))
+    dist = half_w / math.tan(hfov / 2)
     cam.location = target + view * dist
     cam.rotation_mode = "QUATERNION"
     cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
+    cd.dof.use_dof = True
+    cd.dof.focus_distance = dist
+    cd.dof.aperture_fstop = 5.6
     return cam

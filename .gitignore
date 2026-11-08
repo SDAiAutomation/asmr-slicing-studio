@@ -3,3 +3,4 @@ bench_runs/
 __pycache__/
 *.pyc
 scripts/_bench_*.json
+assets/cache/
