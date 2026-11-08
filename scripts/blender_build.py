@@ -464,9 +464,33 @@ def cutting_board(size, thick=0.022, radius=0.028):
     return board
 
 
-def setup_environment(scn, board_size=(0.46, 0.34)):
+def board_brand(text, size):
+    """The account handle burned into the front-left corner of the board, like a pyrography
+    mark: it is part of the scene, so a re-upload cannot crop or blur it away without
+    damaging the video. Lies flat on the top face and reads correctly from the camera
+    (which looks along +Y from the front edge)."""
+    w, d = size
+    cu = bpy.data.curves.new("BoardBrand", "FONT")
+    cu.body = text
+    f = _bold_font()
+    if f:
+        cu.font = f
+    cu.size = max(0.016, d * 0.075)
+    cu.align_x, cu.align_y = "LEFT", "BOTTOM"
+    cu.extrude = 0.00008
+    ob = bpy.data.objects.new("BoardBrand", cu)
+    bpy.context.scene.collection.objects.link(ob)
+    ob.location = (-w / 2 + 0.03, -d / 2 + 0.018, 0.00012)
+    mat = simple_mat("BurnedWood", (0.075, 0.035, 0.015), 0.85)
+    cu.materials.append(mat)
+    return ob
+
+
+def setup_environment(scn, board_size=(0.46, 0.34), brand=""):
     """Realistic tabletop: wooden cutting board on a dark surface, studio HDRI light."""
     board = cutting_board(board_size)
+    if brand:
+        board_brand(brand, board_size)
     bpy.ops.mesh.primitive_plane_add(size=6, location=(0, 0, -0.0221))
     floor = bpy.context.object
     floor.name = "Table"
@@ -535,7 +559,7 @@ def build_scene(plan, out_dir):
         rim = simple_mat("Rim", M["rim"], 0.35)
         mats = [skin, flesh, rim]
 
-    setup_environment(scn)
+    setup_environment(scn, brand=cfg.get("board_watermark", ""))
 
     # --- knife
     knife = build_knife()
