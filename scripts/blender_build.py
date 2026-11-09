@@ -373,14 +373,15 @@ def _asset(name):
 
 
 def board_material():
-    """Photo-scanned wood (Poly Haven, CC0) when available, procedural grain otherwise."""
+    """The channel's signature board: clean, light maple with a fine straight grain.
+    Deliberately procedural, so it is identical in every video."""
     mat, nt, bsdf = principled("Board")
     L = nt.links
     tc = nt.nodes.new("ShaderNodeTexCoord")
     mp = nt.nodes.new("ShaderNodeMapping")
     mp.inputs["Scale"].default_value = (2.2, 2.2, 2.2)
     L.new(tc.outputs["Object"], mp.inputs["Vector"])
-    diff = _asset("wood_diff.jpg")
+    diff = None  # photo textures looked worn and varied with the download
     if diff:
         def img(path, colorspace):
             t = nt.nodes.new("ShaderNodeTexImage")
@@ -402,19 +403,19 @@ def board_material():
         wave = nt.nodes.new("ShaderNodeTexWave")
         wave.bands_direction = "X"
         set_input(wave, "Scale", 18.0)
-        set_input(wave, "Distortion", 2.5)
+        set_input(wave, "Distortion", 0.8)
         set_input(wave, "Detail", 8.0)
         set_input(wave, "Detail Roughness", 0.7)
         sc = nt.nodes.new("ShaderNodeMapping")
         sc.inputs["Scale"].default_value = (0.25, 4.0, 4.0)  # long grain along the board
         L.new(mp.outputs["Vector"], sc.inputs["Vector"])
         L.new(sc.outputs["Vector"], wave.inputs["Vector"])
-        r = ramp(nt, [(0.0, (0.42, 0.25, 0.12)), (0.6, (0.55, 0.36, 0.19)), (1.0, (0.36, 0.20, 0.09))])
+        r = ramp(nt, [(0.0, (0.60, 0.40, 0.21)), (0.6, (0.72, 0.51, 0.29)), (1.0, (0.56, 0.37, 0.19))])
         L.new(wave.outputs["Fac"], r.inputs["Fac"])
         L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
-        set_input(bsdf, "Roughness", 0.55)
+        set_input(bsdf, "Roughness", 0.42)
         bump = nt.nodes.new("ShaderNodeBump")
-        set_input(bump, "Strength", 0.08)
+        set_input(bump, "Strength", 0.02)
         L.new(wave.outputs["Fac"], bump.inputs["Height"])
         L.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
     return mat
@@ -475,18 +476,21 @@ def board_brand(text, size):
     f = _bold_font()
     if f:
         cu.font = f
-    cu.size = max(0.016, d * 0.075)
+    cu.size = max(0.020, d * 0.085)
     cu.align_x, cu.align_y = "LEFT", "BOTTOM"
     cu.extrude = 0.00008
     ob = bpy.data.objects.new("BoardBrand", cu)
     bpy.context.scene.collection.objects.link(ob)
     ob.location = (-w / 2 + 0.03, -d / 2 + 0.018, 0.00012)
-    mat = simple_mat("BurnedWood", (0.075, 0.035, 0.015), 0.85)
+    mat = simple_mat("BurnedWood", (0.02, 0.009, 0.004), 0.7)
     cu.materials.append(mat)
     return ob
 
 
-def setup_environment(scn, board_size=(0.46, 0.34), brand=""):
+BOARD_SIZE = (0.40, 0.27)  # same board in every video: it is the channel's signature
+
+
+def setup_environment(scn, board_size=BOARD_SIZE, brand=""):
     """Realistic tabletop: wooden cutting board on a dark surface, studio HDRI light."""
     board = cutting_board(board_size)
     if brand:
@@ -689,34 +693,63 @@ def make_piece_obj(pid, b, mats):
 
 
 def build_knife():
-    steel = simple_mat("Steel", (0.75, 0.76, 0.78), 0.12, 1.0)
-    handle_m = simple_mat("Handle", (0.03, 0.025, 0.02), 0.45)
+    """Chef's knife as ONE mesh (copies keep the handle): curved belly, ground bevel, bolster,
+    riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
+    import numpy as np
+    from knife_traj import edge_y
+    steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
+    set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
+    handle_m = simple_mat("Handle", (0.045, 0.024, 0.014), 0.38)
+    rivet_m = simple_mat("Rivet", (0.75, 0.62, 0.35), 0.25, 1.0)
     bm = bmesh.new()
-    # blade profile in local XY: edge on y=0 from x=-0.11 (tip) to x=0.09 (heel)
-    prof = [(-0.115, 0.012), (-0.10, 0.0), (0.09, 0.0), (0.09, 0.048), (-0.02, 0.046), (-0.09, 0.03)]
-    t = 0.0009
-    edge_t = 0.00008  # a real edge is not infinitely thin; avoids degenerate faces
-    top = [bm.verts.new((x, y, t if y > 0.001 else edge_t)) for x, y in prof]
-    bot = [bm.verts.new((x, y, -t if y > 0.001 else -edge_t)) for x, y in prof]
-    bm.faces.new(top)
-    bm.faces.new(list(reversed(bot)))
-    n = len(prof)
-    for i in range(n):
-        j = (i + 1) % n
-        bm.faces.new((top[i], top[j], bot[j], bot[i]))
+    xs = np.linspace(-0.115, 0.09, 42)
+
+    def spine_y(x):
+        return 0.048 if x > -0.02 else 0.013 + 0.035 * ((x + 0.115) / 0.095) ** 0.75
+
+    rows = []
+    for x in xs:
+        e, s = float(edge_y(x)), spine_y(x)
+        grind = e + (s - e) * 0.42
+        t = 0.0011 * min(1.0, (x + 0.125) / 0.05)
+        rows.append([bm.verts.new((x, e, 0.0)),
+                     bm.verts.new((x, grind, t * 0.75)), bm.verts.new((x, s, t)),
+                     bm.verts.new((x, s, -t)), bm.verts.new((x, grind, -t * 0.75))])
+    for a, b in zip(rows, rows[1:]):
+        for k in range(5):
+            bm.faces.new((a[k], b[k], b[(k + 1) % 5], a[(k + 1) % 5]))
+    bm.faces.new(rows[0])
+    bm.faces.new(list(reversed(rows[-1])))
+
+    def box(centre, size, mi, bevel=0.0, smooth=False):
+        res = bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(centre) @ Matrix.Diagonal((*size, 1.0)))
+        vs = res["verts"]
+        if bevel:
+            es = list({e for v in vs for e in v.link_edges})
+            out = bmesh.ops.bevel(bm, geom=vs + es, offset=bevel, segments=3, profile=0.5, affect="EDGES")
+            faces = out["faces"] + list({f for v in vs if v.is_valid for f in v.link_faces})
+        else:
+            faces = list({f for v in vs for f in v.link_faces})
+        for f in faces:
+            f.material_index, f.smooth = mi, smooth
+
+    box((0.097, 0.024, 0.0), (0.014, 0.048, 0.0065), 0, 0.0012)
+    box((0.163, 0.026, 0.0), (0.118, 0.026, 0.017), 1, 0.0055, True)
+    for x in (0.128, 0.163, 0.198):
+        res = bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.0032, radius2=0.0032, depth=0.0178,
+                                    matrix=Matrix.Translation((x, 0.026, 0.0)))
+        for f in {f for v in res["verts"] for f in v.link_faces}:
+            f.material_index, f.smooth = 2, True
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-    me = bpy.data.meshes.new("Blade")
+    me = bpy.data.meshes.new("Knife")
     bm.to_mesh(me)
-    me.materials.append(steel)
+    bm.free()
+    for m in (steel, handle_m, rivet_m):
+        me.materials.append(m)
     blade = bpy.data.objects.new("Knife", me)
     bpy.context.scene.collection.objects.link(blade)
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0.15, 0.022, 0))
-    handle = bpy.context.object
-    handle.name = "KnifeHandle"
-    handle.scale = (0.12, 0.022, 0.016)
-    handle.data.materials.append(handle_m)
-    handle.parent = blade
     blade.rotation_mode = "QUATERNION"
+    blade.scale = (0.85, 0.85, 0.85)
     return blade
 
 
@@ -875,6 +908,7 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
     and the bottom ~25 % (username, caption) are covered by the app UI on a phone.
     y is in units of the frame half-height: +1 = top edge, -1 = bottom edge."""
     white = simple_mat("Overlay", (1, 1, 1), 1.0, 0.0, emit=(1, 1, 1))
+    ink = simple_mat("OverlayInk", (0.018, 0.010, 0.005), 1.0, 0.0, emit=(0.018, 0.010, 0.005))
     accent = simple_mat("OverlayAccent", (1, 0.75, 0.3), 1.0, 0.0, emit=(1, 0.72, 0.25))
     D = 0.1
     hh = D * math.tan(math.atan(18 / 50))
@@ -882,7 +916,7 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
     if cfg["show_counter"]:
         _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.60, D, white)
         text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
-        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, white)
+        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, ink)  # dark ink: this counter sits on the light board
         text_obj("PiecesWord", cfg["label_pieces"], hh * 0.05, (0, -hh * 0.48, -D), cam, accent)
     if cfg.get("hook_text"):
         ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.31, -D), cam, white)
@@ -922,6 +956,8 @@ def setup_render(scn, cfg, out_dir, final):
             pass
         # small studio scene: few bounces are enough, caustics never matter here
         c.max_bounces = 4
+        scn.render.use_motion_blur = cfg.get("format") == "levitate"
+        scn.render.motion_blur_shutter = 0.45
         c.diffuse_bounces, c.glossy_bounces = 2, 2
         c.transmission_bounces, c.transparent_max_bounces = 2, 4
         c.caustics_reflective = c.caustics_refractive = False
@@ -978,6 +1014,9 @@ def main():
             report = build_scene(plan, out_dir)
         scn = bpy.context.scene
         scn["asmr_plan"] = os.path.abspath(a["plan"])
+        # embed textures/HDRI: relative paths break when the run dir moves between CI jobs
+        # (a missing HDRI renders the whole world magenta)
+        bpy.ops.file.pack_all()
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(out_dir, "scene.blend"))
         # previews: opening, a cut in progress, mid progression, final + one still per stroke
         pv = os.path.join(out_dir, "previews")
@@ -992,6 +1031,16 @@ def main():
                      "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
                      "04_final": lv[-1]["collapse_end"] + 4}
             if plan["config"]["format"] == "levitate":
+                if plan["config"].get("inspect_contacts"):
+                    seen = {}
+                    for bs in plan.get("blade_strokes", []):
+                        seen.setdefault(bs["axis"], bs)
+                    n = 10
+                    for bs in seen.values():
+                        c = bs["time"]["contact"]
+                        for f in (c - 1, c, c + 2):
+                            shots[f"{n}_contact"] = f
+                            n += 1
                 shots["06_falling"] = mid["collapse_start"] + (mid["collapse_end"] - mid["collapse_start"]) // 3
             # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
             sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]

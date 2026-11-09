@@ -16,7 +16,8 @@ import time
 
 import numpy as np
 
-from common import OBJECTS, MATERIALS, grid_occupancy, load_config
+import knife_traj as KT
+from common import OBJECTS, MATERIALS, grid_occupancy, load_config, levitate_lift
 
 
 def split_cuts(ext, C):
@@ -72,6 +73,20 @@ def _plan(cfg, ts=1.0):
     rng = np.random.default_rng(cfg["random_seed"])
 
     levels, strokes, cuts_ev, pieces_ev = [], [], [], []
+    blade_strokes = []
+    levitate = cfg["format"] == "levitate"
+    span = float(max(ext[0], ext[1]))
+    lift = levitate_lift(cfg, shape) if levitate else 0.0
+    height = float(ext[2])
+    centre = np.array([0.0, 0.0, lift + height / 2])
+    radius = float(np.linalg.norm(ext)) / 2 * 1.15
+    # the blade grows with the object so its edge always covers the whole section
+    width_needed = float(np.hypot(ext[0], ext[1]))
+    knife_scale = float(min(1.3, max(0.85, width_needed * 1.05 / (KT.EDGE_X[-1] - KT.EDGE_X[0]))))
+    resistance = KT.RESISTANCE.get(cfg["object_type"], 0.5)
+    yaws = [-0.32, 0.42, -0.5, 0.24]
+    safe_r = radius * 1.25 + 0.03
+    prev_ready = None
     frame = 1
     intro = int(0.4 * fps)   # first cut within half a second: the hook is the action itself
     for li, C in enumerate(cfg["cuts_sequence"]):
@@ -91,12 +106,77 @@ def _plan(cfg, ts=1.0):
         order = [(0, k) for k in range(1, cuts[0] + 1)] + \
                 [(1, k) for k in range(1, cuts[1] + 1)] + \
                 [(2, k) for k in range(cuts[2], 0, -1)]
+        # Visible blade passes: one per cut while it stays readable, then each pass stands for
+        # a group of neighbouring cuts (they appear while the blade crosses the object).
+        min_slot = max(10, int(0.42 * fps))
+        n_cuts = max(1, len(order))
+        readable = n_cuts <= 20   # every cut gets its own, unhurried blade pass
+        if readable:
+            min_slot = max(min_slot, int(0.6 * fps))
+        visible = n_cuts if readable else min(n_cuts, max(1, dur // min_slot))
+        yaw = yaws[li % 4] if levitate else 0.0
+        pose = KT.Pose(yaw, centre, height / 2)
+        cut_frames = [f] * n_cuts
+        cut_group = [0] * n_cuts
+        groups = [g for g in np.array_split(np.arange(n_cuts), visible) if len(g)]
+        lvl_blades, planned = [], []
+        for gi, g in enumerate(groups):
+            mid = int(g[len(g) // 2])
+            ax, k = order[mid]
+            p_obj = (lo + ext / 2).copy()
+            p_obj[ax] = lo[ax] + ext[ax] * k / n[ax]
+            normal = np.zeros(3)
+            normal[ax] = 1.0
+            st = KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
+            if st is None:   # a plane grazing the outline: try the group's other planes
+                for alt in g:
+                    ax, k = order[int(alt)]
+                    p_obj = (lo + ext / 2).copy()
+                    p_obj[ax] = lo[ax] + ext[ax] * k / n[ax]
+                    normal = np.zeros(3)
+                    normal[ax] = 1.0
+                    st = KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
+                    if st is not None:
+                        break
+            if st is not None:
+                st.update(level=li, axis=int(ax), group_cuts=len(g), resistance=resistance)
+            planned.append((g, st))
+        # timing: each pass gets the frames it needs (flight between planes + its own stroke),
+        # any spare time of the level is shared out so the pacing stays even
+        needs = []
+        for g, st in planned:
+            if st is None:
+                needs.append((0, min_slot))
+                continue
+            p1, q1 = KT.ready_pose(st)
+            fly = KT.transit_frames(prev_ready[0], prev_ready[1], p1, q1, centre, safe_r) if prev_ready else 0
+            body = max(min_slot, KT.body_frames(st))
+            needs.append((fly, body))
+            prev_ready = (p1, q1)
+        dur = max(dur, sum(a + b for a, b in needs))
+        spare = dur - sum(a + b for a, b in needs)
+        cursor = f
+        for gi, ((g, st), (fly, body)) in enumerate(zip(planned, needs)):
+            body += spare // len(planned) + (1 if gi < spare % len(planned) else 0)
+            ready = cursor + fly
+            end = ready + body
+            if st is not None:
+                st["time"] = KT.timing(ready, end, resistance, KT.retract_frames(st))
+                lvl_blades.append(st)
+                c0, x0 = st["time"]["contact"], st["time"]["exit"]
+            else:
+                c0, x0 = ready, ready
+            for q, j in enumerate(g):
+                cut_frames[int(j)] = int(round(c0 + (x0 - c0) * (q + 1) / len(g)))
+                cut_group[int(j)] = gi
+            cursor = end
+        blade_strokes.extend(lvl_blades)
         active = [0, 0, 0]
         z_done = 0
         last_eval_frame = None
         lvl_strokes = []
         for j, (ax, k) in enumerate(order):
-            sf = f + (j * dur) // max(1, len(order))
+            sf = cut_frames[j]
             pos = lo[ax] + ext[ax] * k / n[ax]
             if ax == 2:
                 z_done += 1
@@ -104,7 +184,7 @@ def _plan(cfg, ts=1.0):
             else:
                 active[ax] = k
             st = {"level": li, "axis": int(ax), "index": int(k), "pos": float(pos),
-                  "frame": int(sf), "n_in_level": j + 1}
+                  "frame": int(sf), "n_in_level": j + 1, "group": cut_group[j]}
             lvl_strokes.append(st)
             cuts_ev.append((int(sf), j + 1, li))
             if sf != last_eval_frame or j == len(order) - 1:
@@ -127,7 +207,7 @@ def _plan(cfg, ts=1.0):
                "strokes_start": f, "strokes_end": f + dur, "collapse_start": f_end,
                "collapse_end": f_end + collapse, "exit_start": f_end + collapse + hold,
                "end_frame": f_end + collapse + hold + exit_f,
-               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist()}
+               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(), "yaw": yaw}
         pieces_ev.append((f_end, cubes, li))
         levels.append(lvl)
         strokes.extend(lvl_strokes)
@@ -140,6 +220,10 @@ def _plan(cfg, ts=1.0):
         "version": 3, "kind": "grid", "config": cfg, "fps": fps,
         "total_frames": int(total), "duration_s": total / fps,
         "levels": levels, "strokes": strokes, "loop_in": int(loop_in),
+        "blade_strokes": blade_strokes, "knife_scale": knife_scale, "lift": lift,
+        "object_centre": centre.tolist(),
+        "knife_track": KT.build_track(blade_strokes, int(total), centre, safe_r),
+        "object_reaction": KT.reaction_track(blade_strokes, int(total), resistance),
         "counters": {"cuts": cuts_ev, "pieces": pieces_ev},
         "stats": {"levels": len(levels), "blade_strokes": len(strokes),
                   "final_cubes": levels[-1]["cubes"] if levels else 0,
