@@ -163,7 +163,7 @@ jobs:
           ffmpeg -v error -y -pattern_type glob -i '0[12346]_*.png' -vf "scale=300:534,tile=6x1" -frames:v 1 -q:v 5 montage.jpg
           echo "MONTAGE_START"; base64 -w0 montage.jpg; echo; echo "MONTAGE_END"
           if ls 1[0-9]_contact.png >/dev/null 2>&1; then
-            ffmpeg -v error -y -pattern_type glob -i '1[0-9]_contact.png' -vf "crop=iw:iw:0:ih*0.22,scale=240:240,tile=9x1" -frames:v 1 -q:v 5 contacts.jpg
+            ffmpeg -v error -y -pattern_type glob -i '1?_contact.png' -vf "crop=iw:iw:0:ih*0.22,scale=240:240,tile=9x1" -frames:v 1 -q:v 5 contacts.jpg
             echo "CONTACTS_START"; base64 -w0 contacts.jpg; echo; echo "CONTACTS_END"
           fi
 
