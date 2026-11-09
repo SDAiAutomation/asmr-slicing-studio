@@ -1,0 +1,55 @@
+{
+  "id": "phy-001-ball-race-en",
+  "engine": "physics",
+  "series": "PHYSICS · TEST 001",
+  "decimal": ".",
+  "handle": "@BreakpointLabTV",
+  "scale_m": 2,
+  "hook": ["3 tracks. Same start. Same finish.", "Which ball wins?"],
+  "hook_sub": "Guess in the comments ↓",
+  "replay_label": "SLOW-MO",
+  "rounds": [
+    {
+      "title": "ROUND 1 · THE RACE",
+      "kind": "race",
+      "subtitle": "Shortest · Curved · Steep",
+      "lanes": [
+        {"name": "STRAIGHT", "curve": "line"},
+        {"name": "CURVE", "curve": "cycloid"},
+        {"name": "STEEP", "curve": "steep"}
+      ],
+      "question": "Which one wins?",
+      "question_sub": "RED, YELLOW or BLUE ↓",
+      "stamp": {"text": "CURVE WINS", "color": "green"},
+      "fact_auto": true,
+      "fact": ["The shortest path is the slowest"]
+    },
+    {
+      "title": "ROUND 2 · HEAD START",
+      "kind": "tautochrone",
+      "subtitle": "Same curve, different heights",
+      "lanes": [
+        {"name": "HIGH", "curve": "cycloid", "start": 0.0},
+        {"name": "MID", "curve": "cycloid", "start": 0.35},
+        {"name": "LOW", "curve": "cycloid", "start": 0.7}
+      ],
+      "question": "Which one gets there first?",
+      "question_sub": "HIGH, MID or LOW ↓",
+      "stamp": {"text": "ALL AT ONCE", "color": "green"},
+      "fact_auto": true,
+      "fact": ["On this curve, the start height doesn't matter"]
+    }
+  ],
+  "explain": {
+    "title": "THE CYCLOID",
+    "lines": ["Fastest path from A to B", "Same arrival time from any height", "Steep start = speed early"]
+  },
+  "source": ["Brachistochrone (J. Bernoulli, 1696) · Tautochrone (C. Huygens, 1673)", "Simulated: balls rolling without friction losses, 2.2 m drop"],
+  "cta": "NEXT EXPERIMENT? Comment ↓",
+  "caption": "3 tracks, same start, same finish — which ball wins? 🏁 The curve beats the straight line, and on that curve every ball arrives at the same time, whatever its height. Physics from 1696. What should we test next? 👇 #physics #science #brachistochrone #satisfying #engineering #3d",
+  "sources_detail": [
+    "Brachistochrone: the cycloid is the curve of fastest descent under gravity (Johann Bernoulli, 1696).",
+    "Tautochrone: on a cycloid, the time to reach the lowest point does not depend on the starting point (Christiaan Huygens, Horologium Oscillatorium, 1673).",
+    "Simulation: rolling solid spheres without slipping (a = 5/7 g), no rolling resistance; track drop 2.2 m, length 3.4 m. Times computed by integrating ds / sqrt(2 g' h)."
+  ]
+}

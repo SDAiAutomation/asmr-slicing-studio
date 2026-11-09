@@ -103,6 +103,30 @@ def main(tl_path, out_path):
                 k += 1
             q = (tt > e["t0"]) & (tt < e["t1"])
             out[q] += np.sin(2 * np.pi * (60 + 30 * sm(e["t0"], e["t1"], tt[q])) * tt[q]) * 0.08 * sm(e["t0"], e["t1"], tt[q])
+        elif ty == "go":                                           # start gate
+            m = int(0.25 * SR)
+            tm = np.arange(m) / SR
+            add(np.sin(2 * np.pi * 1760 * tm) * env(m, 0.002, 0.08), e["t"], 0.3)
+            add(lp(rng.standard_normal(int(0.05 * SR)), 0.5) * env(int(0.05 * SR), 0.0005, 0.01), e["t"], 0.5)
+        elif ty == "race":                                         # balls rolling: rumble that grows with speed
+            t0, t1, sp = e["t0"], e["t1"], e.get("speed", 1)
+            m = (tt >= t0) & (tt < t1 + 0.05)
+            k = np.clip((tt[m] - t0) / max(t1 - t0, 1e-3), 0, 1)
+            a = 0.02 if sp == 1 else 0.008                         # slow motion: deeper rumble
+            out[m] += lp(rng.standard_normal(int(m.sum())), a) * (0.25 + 0.75 * k) * 2.2
+            for j, tf in enumerate(sorted(e["finishes"])):
+                mm = int(0.5 * SR)
+                tm = np.arange(mm) / SR
+                f0 = (1318.5, 1046.5, 880.0)[min(j, 2)] * (1 if sp == 1 else 0.5)
+                add(np.sin(2 * np.pi * f0 * tm) * env(mm, 0.002, 0.15) + 0.4 * np.sin(4 * np.pi * f0 * tm) * env(mm, 0.002, 0.06), tf, 0.22)
+        elif ty == "drop":                                         # trap doors snap open
+            m = int(0.06 * SR)
+            add(lp(rng.standard_normal(m), 0.6) * env(m, 0.0005, 0.01), e["t"], 0.5)
+        elif ty == "break" and e.get("kind") == "drop":            # small impact: tick + one shell crack
+            n = int(0.4 * SR)
+            t = np.arange(n) / SR
+            add(np.sin(2 * np.pi * (180 - 60 * t) * t) * env(n, 0.001, 0.05), e["t"], 0.6)
+            add(lp(rng.standard_normal(n), 0.7) * env(n, 0.0003, 0.018), e["t"], 0.8)
         elif ty == "break":
             t_b = e["t"]
             for k in range(14):                                       # stress creaks
@@ -140,6 +164,8 @@ def main(tl_path, out_path):
             wn = rng.standard_normal(m)
             k = tm / 0.5                                   # filter opens up as the whoosh rises
             add(((1 - k) * lp(wn, 0.05) + k * lp(wn, 0.3)) * k ** 2, e["t0"] - 0.1, 0.35)
+            if "tbreak" not in e:                          # physics replays: the race sound is its own event
+                continue
             n = int(2.0 * SR)
             t = np.arange(n) / SR
             boom = np.sin(2 * np.pi * (40 - 15 * t) * t) * env(n, 0.01, 0.55)

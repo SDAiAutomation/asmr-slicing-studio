@@ -1,0 +1,398 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Physics engine (Breakpoint Lab "Physics" series): ball races on curved tracks, raymarched (WebGL)
+     with a clean overlay. Motion comes from energy conservation for balls rolling without slipping
+     (v = sqrt(2 g' h), g' = 5/7 g): what is shown is what the physics gives. Same API as engine.html. -->
+<style>
+@font-face{font-family:P;src:url("fonts/Poppins-Bold.ttf");font-weight:700}
+@font-face{font-family:DJ;src:url("fonts/DejaVuSans-Bold.ttf");font-weight:700}
+html,body{margin:0;background:#000}canvas{display:block}
+</style></head>
+<body>
+<canvas id="gl" width="1080" height="1920"></canvas>
+<canvas id="out" width="1080" height="1920"></canvas>
+<script id="fs" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2 R;
+uniform float camAng, camDist, camH, camTY;
+uniform vec2 shake;
+uniform vec4 geo;          // xa, ya, xb, yb
+uniform vec2 cyc;          // cycloid radius, theta at B
+uniform vec3 ctype;        // curve type per lane: 0 line, 1 cycloid, 2 steep
+uniform vec3 bpos0, bpos1, bpos2;
+uniform vec3 bang;         // rolling angle per ball
+uniform float showBalls;
+uniform vec4 tops0, tops1, tops2;   // post heights per lane (-1 = no post)
+
+const float BR=0.075;      // ball radius
+const float RR=0.011;      // rail radius
+const float RS=0.045;      // half spacing between the two rails of a lane
+float sdRoundBox(vec3 p, vec3 b, float r){ vec3 q=abs(p)-b; return length(max(q,0.0))+min(max(q.x,max(q.y,q.z)),0.0)-r; }
+float sdCylY(vec3 p, float h, float r){ vec2 d=abs(vec2(length(p.xz),p.y))-vec2(r,h); return min(max(d.x,d.y),0.0)+length(max(d,0.0)); }
+float hash3(vec3 p){ return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453); }
+vec2 opU(vec2 a, vec2 b){ return a.x<b.x?a:b; }
+
+// lane centre line, parametric: u in [0,1] from A to B
+vec2 P(float k, float u){
+  float xa=geo.x, ya=geo.y, DX=geo.z-geo.x, DY=geo.y-geo.w;
+  if(k<0.5) return vec2(xa+DX*u, ya-DY*u);
+  if(k<1.5){ float th=cyc.y*u; return vec2(xa+cyc.x*(th-sin(th)), ya-cyc.x*(1.0-cos(th))); }
+  float w=min(u/0.15,1.0); return vec2(xa+DX*u, ya-DY*(1.0-(1.0-w)*(1.0-w)));
+}
+vec2 dP(float k, float u){
+  float DX=geo.z-geo.x, DY=geo.y-geo.w;
+  if(k<0.5) return vec2(DX,-DY);
+  if(k<1.5){ float th=cyc.y*u; return cyc.y*cyc.x*vec2(1.0-cos(th), -sin(th)); }
+  float w=u/0.15; return u<0.15 ? vec2(DX, -DY*2.0*(1.0-w)/0.15) : vec2(DX,0.0);
+}
+// exact-ish distance in the xy plane from q to the lane centre line (two Gauss-Newton starts)
+float curveDist(float k, vec2 q){
+  float xa=geo.x, ya=geo.y, DX=geo.z-geo.x, DY=geo.y-geo.w;
+  float u1=clamp((q.x-xa)/DX,0.0,1.0), u2=u1;
+  if(k>0.5&&k<1.5){ float c=clamp(1.0-(ya-q.y)/cyc.x,-1.0,1.0); u2=clamp(acos(c)/cyc.y,0.0,1.0); }
+  if(k>1.5){ float h=clamp((ya-q.y)/DY,0.0,1.0); u2=0.15*(1.0-sqrt(1.0-h)); }
+  float best=1e5;
+  for(int s=0;s<2;s++){
+    float u=s==0?u1:u2;
+    for(int i=0;i<4;i++){ vec2 d=P(k,u)-q, t=dP(k,u); u=clamp(u-dot(d,t)/max(dot(t,t),1e-6),0.0,1.0); }
+    best=min(best,length(P(k,u)-q));
+  }
+  return best;
+}
+float railY(float k, float x){                    // height of the rail at x (for posts)
+  float u=clamp((x-geo.x)/(geo.z-geo.x),0.0,1.0);
+  if(k>0.5&&k<1.5){ float d=max(x-geo.x,0.0), th=clamp(pow(6.0*d/cyc.x,1.0/3.0),0.0,cyc.y);
+    for(int i=0;i<5;i++){ float f=cyc.x*(th-sin(th))-d; th=clamp(th-f/(cyc.x*(1.0-cos(th))+1e-4),0.0,cyc.y); }
+    return geo.y-cyc.x*(1.0-cos(th)); }
+  return P(k,u).y;
+}
+vec2 lane(vec3 p, float k, float z0, vec4 tops){
+  float dz=abs(p.z-z0)-RS;
+  if(abs(dz)>0.1) return vec2(abs(dz)-RR-0.008,0.0);           // true lower bound, never a surface
+  vec2 res=vec2(length(vec2(curveDist(k,p.xy),dz))-RR,4.0);    // twin chrome rails
+  // slim posts with a T tie, at fixed x stations; tops precomputed in JS (exact SDF, no tricks)
+  for(int i=0;i<4;i++){
+    float yr=i==0?tops.x:(i==1?tops.y:(i==2?tops.z:tops.w));
+    if(yr<0.0) continue;
+    float xi=geo.x+0.25+0.42*float(i);
+    float post=sdCylY(p-vec3(xi,(yr-RR-0.012)*0.5,z0),(yr-RR-0.012)*0.5,0.007);
+    post=min(post,sdRoundBox(p-vec3(xi,yr-RR-0.012,z0),vec3(0.006,0.006,RS),0.003));
+    res=opU(res,vec2(post,3.0));
+  }
+  return res;
+}
+
+vec2 mapX(vec3 p, bool lanes){
+  vec2 res=vec2(p.y,1.0);
+  float xa=geo.x, ya=geo.y, xb=geo.z, yb=geo.w;
+  // start tower: white column with a yellow band, finish stops with a checker top
+  res=opU(res,vec2(sdRoundBox(p-vec3(xa-0.11,(ya+0.08)*0.5,0),vec3(0.05,(ya+0.08)*0.5,0.56),0.02),5.0));
+  res=opU(res,vec2(sdRoundBox(p-vec3(xb+0.105,(yb+0.09)*0.5,0),vec3(0.03,(yb+0.09)*0.5,0.56),0.015),6.0));
+  float bx=max(xa-0.3-p.x,p.x-xb-0.3);
+  if(!lanes){} else if(bx<0.0){
+    for(int i=0;i<3;i++){
+      float z0=(float(i)-1.0)*0.36, k=i==0?ctype.x:(i==1?ctype.y:ctype.z);
+      vec2 l=lane(p,k,z0,i==0?tops0:(i==1?tops1:tops2)); if(l.x<res.x) res=l;
+    }
+  } else res=opU(res,vec2(bx+0.01,0.0));
+  if(showBalls>0.5){
+    res=opU(res,vec2(length(p-bpos0)-BR,20.0));
+    res=opU(res,vec2(length(p-bpos1)-BR,21.0));
+    res=opU(res,vec2(length(p-bpos2)-BR,22.0));
+  }
+  return res;
+}
+
+vec2 map(vec3 p){ return mapX(p,true); }
+vec2 mapS(vec3 p){ return mapX(p,false); }   // shadows/AO: thin rails and posts left out (no banding)
+vec3 calcNormal(vec3 p){
+  vec2 e=vec2(0.0007,-0.0007);
+  return normalize(e.xyy*map(p+e.xyy).x+e.yyx*map(p+e.yyx).x+e.yxy*map(p+e.yxy).x+e.xxx*map(p+e.xxx).x);
+}
+float softShadow(vec3 ro, vec3 rd){
+  float res=1.0, t=0.02;
+  for(int i=0;i<40;i++){ float h=mapS(ro+rd*t).x; res=min(res,9.0*h/t); t+=clamp(h,0.015,0.25); if(res<0.002||t>6.0) break; }
+  return clamp(res,0.0,1.0);
+}
+float calcAO(vec3 p, vec3 n){
+  float occ=0.0, sca=1.0;
+  for(int i=0;i<4;i++){ float h=0.015+0.09*float(i); occ+=(h-mapS(p+n*h).x)*sca; sca*=0.8; }
+  return clamp(1.0-2.2*occ,0.0,1.0);
+}
+vec3 bg(vec2 uv){ return mix(vec3(0.90,0.92,0.93),vec3(0.80,0.85,0.88),smoothstep(-1.0,1.0,uv.y)); }
+vec3 env(vec3 r){ float k=r.y*0.5+0.5; return mix(vec3(0.55,0.57,0.60),vec3(0.97,0.98,1.0),smoothstep(0.35,0.75,k)); }
+vec3 laneCol(float i){ return i<0.5?vec3(0.88,0.20,0.25):(i<1.5?vec3(0.98,0.74,0.10):vec3(0.16,0.45,0.85)); }
+
+vec3 shade(vec2 fc){
+  vec2 uv=(2.0*fc-R)/R.y;
+  vec3 ta=vec3(0.0,camTY,0.0);
+  vec3 ro=ta+vec3(sin(camAng)*camDist,camH,cos(camAng)*camDist);
+  ro.xy+=shake; ta.xy+=shake*0.6;
+  vec3 ww=normalize(ta-ro), uu=normalize(cross(ww,vec3(0,1,0))), vv=cross(uu,ww);
+  vec3 rd=normalize(uv.x*uu+uv.y*vv+2.35*ww);
+  vec3 sky=bg(uv), col=sky;
+  float t=0.0; vec2 h=vec2(0.0); bool hit=false;
+  for(int i=0;i<200;i++){ h=map(ro+rd*t); if(h.x<0.0003*t){hit=true;break;} t+=h.x*0.85; if(t>30.0) break; }
+  if(hit){
+    vec3 p=ro+rd*t, n=calcNormal(p);
+    vec3 sun=normalize(vec3(-0.5,0.95,0.6));
+    float sh=softShadow(p+n*0.003,sun), dif=clamp(dot(n,sun),0.0,1.0)*sh, ao=calcAO(p,n);
+    vec3 hal=normalize(sun-rd);
+    float m=h.y;
+    if(m<1.5){ col=sky*mix(0.70,1.0,sh)*mix(0.82,1.0,ao); }
+    else {
+      vec3 alb=vec3(0.8); float sp=0.2, gl=16.0, refl=0.0;
+      if(m<3.5){ alb=vec3(0.80,0.81,0.83); sp=1.0; gl=80.0; refl=0.55; }                 // posts, ties
+      else if(m<4.5){ alb=vec3(0.86,0.87,0.89); sp=1.6; gl=160.0; refl=0.85; }           // polished rails
+      else if(m<5.5){ alb=vec3(0.95,0.95,0.94); if(p.y>geo.y-0.06&&p.y<geo.y+0.0) alb=vec3(0.98,0.74,0.10); sp=0.3; gl=40.0; }
+      else if(m<6.5){ alb=vec3(0.95,0.95,0.94); if(n.y>0.6||n.x>0.6) alb=mix(vec3(0.96),vec3(0.07),step(0.5,fract(floor(p.y*30.0)*0.5+floor(p.z*30.0)*0.5+floor(p.x*30.0)*0.5))); sp=0.3; gl=40.0; }
+      else {                                              // balls: glossy lacquer with a white band that shows rolling
+        float id=m-20.0; vec3 c=id<0.5?bpos0:(id<1.5?bpos1:bpos2);
+        float a=id<0.5?bang.x:(id<1.5?bang.y:bang.z);
+        vec3 q=p-c; float ca=cos(a), sa=sin(a); vec2 r=vec2(ca*q.x+sa*q.y,-sa*q.x+ca*q.y);
+        alb=laneCol(id); if(abs(r.x)<0.014) alb=vec3(0.97);
+        sp=1.6; gl=140.0; refl=0.3;
+      }
+      float amb=0.55+0.45*n.y;
+      vec3 lin=1.25*dif*vec3(1.0,0.96,0.90)+0.62*amb*ao*vec3(0.88,0.92,0.98)+0.38*clamp(dot(n,normalize(vec3(0.55,0.25,0.8))),0.0,1.0)*ao;
+      col=alb*lin;
+      float fre=pow(1.0-clamp(dot(n,-rd),0.0,1.0),4.0);
+      col=mix(col,env(reflect(rd,n))*(0.5+0.5*ao),refl*(0.4+0.6*fre));
+      col+=sp*pow(clamp(dot(n,hal),0.0,1.0),gl)*dif*vec3(1.0,0.97,0.92);
+    }
+  }
+  col=pow(clamp(col,0.0,1.0),vec3(0.95));
+  col*=1.0-0.12*dot(uv*vec2(0.9,0.55),uv*vec2(0.9,0.55));
+  return col;
+}
+void main(){
+  vec3 c=shade(gl_FragCoord.xy+vec2(-0.25,0.25))+shade(gl_FragCoord.xy+vec2(0.25,-0.25));
+  gl_FragColor=vec4(c*0.5,1.0);
+}
+</script>
+<script>
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const sm=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
+const lerp=(a,b,t)=>a+(b-a)*t;
+const G=9.81*5/7;                 // rolling solid ball: a = 5/7 g along the slope
+const BR=0.075, BOFF=Math.sqrt((0.075+0.011)**2-0.045**2);
+const CT={line:0,cycloid:1,steep:2};
+const LANE_COL=['#E0303F','#E8A70F','#2A73D9'];
+
+// ---------------------------------------------------------------- geometry + physics
+function solveTheta(r){let lo=0.05,hi=2*Math.PI-0.01;for(let i=0;i<80;i++){const m=(lo+hi)/2;((m-Math.sin(m))/(1-Math.cos(m))>r)?hi=m:lo=m;}return (lo+hi)/2;}
+function makeGeo(round){
+  const g={xa:-0.85,ya:1.55,xb:0.85,yb:0.45};
+  const DX=g.xb-g.xa, DY=g.ya-g.yb;
+  if(round.kind==='tautochrone'){g.R=DY/2;g.thB=Math.PI;g.xb=g.xa+g.R*Math.PI;}
+  else {g.thB=solveTheta(DX/DY);g.R=DY/(1-Math.cos(g.thB));}
+  return g;
+}
+function curvePt(g,kind,u){                       // u in [0,1] along the lane
+  const DX=g.xb-g.xa, DY=g.ya-g.yb;
+  if(kind==='line') return [g.xa+DX*u,g.ya-DY*u];
+  if(kind==='steep'){const w=Math.min(u/0.15,1);return [g.xa+DX*u,g.ya-DY*(1-(1-w)*(1-w))];}
+  const th=g.thB*u; return [g.xa+g.R*(th-Math.sin(th)),g.ya-g.R*(1-Math.cos(th))];
+}
+// time table: from u0 (rest) to the end of the lane, scale S metres per scene unit
+function simulate(g,kind,u0,S){
+  const N=6000, pts=[];
+  for(let i=0;i<=N;i++){const u=u0+(1-u0)*i/N;pts.push(curvePt(g,kind,u));}
+  const y0=pts[0][1], tab=[{t:0,x:pts[0][0],y:pts[0][1],s:0}];let t=0,s=0;
+  for(let i=1;i<=N;i++){
+    const [x1,y1]=pts[i-1],[x2,y2]=pts[i];const ds=Math.hypot(x2-x1,y2-y1);
+    const v=Math.sqrt(2*G*S*Math.max(y0-(y1+y2)/2,1e-9));t+=ds*S/v;s+=ds;tab.push({t,x:x2,y:y2,s});
+  }
+  return {tab,T:t};
+}
+function posAt(sim,t){
+  const tab=sim.tab;if(t<=0)return tab[0];if(t>=sim.T)return tab[tab.length-1];
+  let lo=0,hi=tab.length-1;while(hi-lo>1){const m=(lo+hi)>>1;(tab[m].t<t)?lo=m:hi=m;}
+  const a=tab[lo],b=tab[hi],k=(t-a.t)/(b.t-a.t);return {x:lerp(a.x,b.x,k),y:lerp(a.y,b.y,k),s:lerp(a.s,b.s,k)};
+}
+function railYAt(g,kind,x){let lo=0,hi=1;for(let i=0;i<50;i++){const m=(lo+hi)/2;(curvePt(g,kind,m)[0]<x)?lo=m:hi=m;}return curvePt(g,kind,(lo+hi)/2)[1];}
+function postTops(g,kind){const r=[];for(let i=0;i<4;i++){const x=g.xa+0.25+0.42*i;r.push(x<g.xb-0.02?railYAt(g,kind,x):-1);}return r;}
+function ballCenter(g,kind,p,z){              // sit the ball on the lane surface
+  const e=0.002, a=curvePt(g,kind,clamp((p.x-e-g.xa)/(g.xb-g.xa),0,1)), b=curvePt(g,kind,clamp((p.x+e-g.xa)/(g.xb-g.xa),0,1));
+  let nx=-(b[1]-a[1]), ny=(b[0]-a[0]);const L=Math.hypot(nx,ny)||1;nx/=L;ny/=L;
+  return [p.x+nx*BOFF,p.y+ny*BOFF,z];
+}
+
+// ---------------------------------------------------------------- timeline
+const D={hook:2.6,title:1.4,show:2.6,question:3.0,go:0.25,after:0.7,settle:1.0,stampHold:0.9,fact:4.0,explain:9.5,outro:6.0};
+const SLOW=0.25;
+function buildTimeline(cfg){
+  const T={rounds:[],events:[]};let t=0;const S=cfg.scale_m||2;
+  T.hook=[0,D.hook];t=D.hook;
+  cfg.rounds.forEach((r,i)=>{
+    const g=makeGeo(r), R={cfg:r,i,start:t,g};
+    R.lanes=r.lanes.map((l,j)=>{const u0=r.kind==='tautochrone'?(l.start||0):0;const sim=simulate(g,l.curve,u0,S);return {...l,sim,z:(j-1)*0.36,h:(sim.tab[0].y-g.yb)*S};});R.Tmax=Math.max(...R.lanes.map(l=>l.sim.T));
+    R.titleEnd=t+D.title;R.showEnd=R.titleEnd+D.show;
+    T.events.push({type:'round',t});
+    R.qStart=R.showEnd;R.qEnd=R.qStart+D.question;T.events.push({type:'question',t0:R.qStart,t1:R.qEnd});
+    R.go=R.qEnd+D.go;T.events.push({type:'go',t:R.go});
+    const Tmax=Math.max(...R.lanes.map(l=>l.sim.T));R.raceEnd=R.go+Tmax+D.after;
+    T.events.push({type:'race',t0:R.go,t1:R.go+Tmax,speed:1,finishes:R.lanes.map(l=>R.go+l.sim.T)});
+    R.lanes.forEach((l,j)=>T.events.push({type:'finish',t:R.go+l.sim.T,lane:j}));
+    R.replayT0=R.raceEnd+D.settle*0.3;R.replayT1=R.replayT0+(Tmax+0.25)/SLOW;
+    T.events.push({type:'race',t0:R.replayT0+0.1/SLOW,t1:R.replayT0+(0.1+Tmax)/SLOW,speed:SLOW,finishes:R.lanes.map(l=>R.replayT0+(0.1+l.sim.T)/SLOW)});
+    T.events.push({type:'replay',t0:R.replayT0,t1:R.replayT1});
+    R.stampT=R.replayT1+0.1;T.events.push({type:'stamp',t:R.stampT,color:r.stamp.color});
+    R.factT=R.stampT+D.stampHold;T.events.push({type:'card',t:R.factT});
+    R.end=R.factT+D.fact;t=R.end;T.rounds.push(R);
+  });
+  T.explain=[t,t+D.explain];T.events.push({type:'explain',t0:t,t1:t+D.explain});t+=D.explain;
+  T.outro=[t,t+D.outro];T.events.push({type:'card',t});T.events.push({type:'cta',t:t+1.4});t+=D.outro;
+  T.duration=t;return T;
+}
+
+// ---------------------------------------------------------------- scene state
+function sceneState(T,t){
+  let R=T.rounds[0];for(const r of T.rounds) if(t>=r.start) R=r;
+  const inExplain=t>=T.explain[0];
+  const replay=t>=R.replayT0&&t<R.replayT1;
+  let rt;                                           // race clock (s since release)
+  if(inExplain){const per=R.Tmax+1.1;rt=((t-T.explain[0])%per)-0.35;}
+  else if(replay) rt=(t-R.replayT0)*SLOW-0.1; else if(t>=R.replayT1) rt=99; else rt=t-R.go;
+  const s={R,rt,replay,g:R.g,balls:[],showBalls:1,shake:[0,0]};
+  R.lanes.forEach((l,j)=>{const p=posAt(l.sim,Math.max(rt,0));s.balls.push({c:ballCenter(R.g,l.curve,p,l.z),ang:-p.s/BR,done:rt>=l.sim.T});});
+  const lt=t-R.start;
+  s.camAng=0.36+0.08*Math.sin(lt*0.2)-(R.i%2?0.1:0);s.camDist=lerp(4.5,4.1,sm(0,10,lt));s.camH=1.0;s.camTY=1.02;
+  if(t>=R.qStart&&t<R.go) s.camDist-=0.25*sm(R.qStart,R.qEnd,t);
+  if(replay){const k=t-R.replayT0;s.camAng=0.04+0.01*k;s.camDist=5.1-0.05*k;s.camH=0.32;s.camTY=0.98;}
+  if(inExplain){const k=t-T.explain[0];s.camAng=0.06+0.05*Math.sin(k*0.3);s.camDist=5.0;s.camH=0.4;s.camTY=1.0;}
+  return s;
+}
+
+// ---------------------------------------------------------------- WebGL
+const gl=document.getElementById('gl').getContext('webgl',{preserveDrawingBuffer:true,antialias:false});
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}'));
+gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,document.getElementById('fs').textContent));
+gl.linkProgram(prog);gl.useProgram(prog);
+const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const al=gl.getAttribLocation(prog,'a');gl.enableVertexAttribArray(al);gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
+const U={};['R','camAng','camDist','camH','camTY','shake','geo','cyc','ctype','bpos0','bpos1','bpos2','bang','showBalls','tops0','tops1','tops2'].forEach(n=>U[n]=gl.getUniformLocation(prog,n));
+
+// project a scene point to output pixels (same camera as the shader)
+function project(s,p){
+  const ta=[0,s.camTY,0], ro=[ta[0]+Math.sin(s.camAng)*s.camDist,ta[1]+s.camH,ta[2]+Math.cos(s.camAng)*s.camDist];
+  const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  const nrm=a=>{const l=Math.hypot(...a);return a.map(v=>v/l);},cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+  const ww=nrm(sub(ta,ro)),uu=nrm(cross(ww,[0,1,0])),vv=cross(uu,ww),d=sub(p,ro);
+  const z=dot(d,ww),ux=dot(d,uu)/z*2.35,uy=dot(d,vv)/z*2.35;
+  return [(ux*1920+1080)/2,(1920-(uy*1920+1920)/2)];
+}
+
+// ---------------------------------------------------------------- overlay (clean, top band)
+const out=document.getElementById('out'),c=out.getContext('2d');const W=1080,H=1920;
+const COL={green:'#1F9D55',red:'#E0303F',ink:'#1d2126',sub:'#5b636c',brand:'#F7C21A'};
+let DEC='.';
+const fmt=(v,d)=>v.toFixed(d).replace('.',DEC);
+const fade=(t0,t,d=0.25)=>clamp((t-t0)/d,0,1);
+const pop=(t0,t)=>{const k=clamp((t-t0)/0.25,0,1);return 1+0.18*Math.sin(k*Math.PI)*(1-k);};
+function rrect(x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
+function panel(x,y,w,h,r,fill,a=1){if(a<=0)return;c.save();c.globalAlpha=a;c.fillStyle=fill;rrect(x,y,w,h,r);c.fill();c.restore();}
+function fitText(s,maxW,size){c.font=`700 ${size}px P, DJ`;while(c.measureText(s).width>maxW&&size>18){size-=2;c.font=`700 ${size}px P, DJ`;}return size;}
+function ctxt(s,x,y,size,color,a=1){if(a<=0)return;c.save();c.globalAlpha=a;c.font=`700 ${size}px P, DJ`;c.textAlign='center';c.textBaseline='middle';
+  c.lineJoin='round';c.lineWidth=size*0.16;c.strokeStyle='rgba(255,255,255,0.85)';c.strokeText(s,x,y);
+  c.shadowColor='rgba(0,0,0,0.18)';c.shadowBlur=size*0.12;c.shadowOffsetY=size*0.04;c.fillStyle=color;c.fillText(s,x,y);c.restore();}
+function pill(s,x,y,size,fill,a=1){if(a<=0)return;const fs=size;c.font=`700 ${fs}px P, DJ`;const w=c.measureText(s).width+fs*1.1;
+  panel(x-w/2,y-fs*0.85,w,fs*1.7,fs*0.85,fill,a);c.save();c.globalAlpha=a;c.font=`700 ${fs}px P, DJ`;c.textAlign='center';c.textBaseline='middle';c.fillStyle='#fff';c.fillText(s,x,y+1);c.restore();}
+
+function overlay(cfg,T,t,s){
+  const R=s.R, r=R.cfg;
+  ctxt(cfg.series,W/2,292,28,COL.sub,0.9);
+  if(cfg.handle){c.save();c.globalAlpha=0.55;c.font='700 30px P, DJ';c.textAlign='center';c.textBaseline='middle';
+    c.fillStyle='#fff';c.shadowColor='rgba(0,0,0,0.45)';c.shadowBlur=6;c.fillText(cfg.handle,W/2,1395);c.restore();}
+  trails(s);
+  if(t<T.hook[1]){const a=1-fade(T.hook[1]-0.3,t,0.3),hn=cfg.hook.length;
+    cfg.hook.forEach((l,i)=>ctxt(l,W/2,365+i*90,fitText(l,960,82),i===hn-1?COL.red:COL.ink,a));
+    if(cfg.hook_sub) ctxt(cfg.hook_sub,W/2,365+hn*90-8,36,COL.sub,a);
+    labels(s,a);return;}
+  if(t<T.explain[0]){
+    const stampOn=t>=R.stampT;
+    if(t<R.titleEnd+0.2){const a=1-fade(R.titleEnd-0.1,t,0.3),p=pop(R.start,t);c.save();c.translate(W/2,430);c.scale(p,p);ctxt(r.title,0,0,fitText(r.title,960,76),COL.ink,a);c.restore();}
+    else if(t<R.qStart){if(r.subtitle) ctxt(r.subtitle,W/2,430,fitText(r.subtitle,960,52),COL.ink,fade(R.titleEnd,t));}
+    else if(t<R.go){const a=fade(R.qStart,t)*(1-fade(R.go-0.15,t,0.15)),p=1+0.05*Math.sin((t-R.qStart)*Math.PI*4);
+      c.save();c.translate(W/2,415);c.scale(p,p);ctxt(r.question,0,0,fitText(r.question,960,104),COL.red,a);c.restore();
+      ctxt(r.question_sub,W/2,515,fitText(r.question_sub,900,40),COL.ink,a);
+      const n=Math.ceil(R.qEnd-t);if(n>=1&&n<=3&&t>R.qEnd-3) ctxt(String(n),W/2,600,64,COL.ink,a);}
+    else if(!stampOn){ timers(R,s,t); }
+    if(t<R.go) labels(s,t<R.titleEnd?0:fade(R.titleEnd,t));
+    if(s.replay){const a=fade(R.replayT0,t,0.15)*(1-fade(R.replayT1-0.15,t,0.15));
+      c.save();c.globalAlpha=a*0.9;c.fillStyle='#000';c.fillRect(0,640,W,16);c.fillRect(0,1424,W,16);c.restore();
+      pill((cfg.replay_label||'SLOW-MO')+' ×'+Math.round(1/SLOW),W/2,700,28,'rgba(224,48,63,0.92)',a);}
+    if(stampOn){
+      const k=clamp((t-R.stampT)/0.18,0,1),sc2=lerp(2.2,1,k*k)+(k>=1?0.05*Math.exp(-(t-R.stampT-0.18)*10)*Math.sin((t-R.stampT-0.18)*40):0);
+      const col=r.stamp.color==='green'?COL.green:COL.red;
+      c.save();c.translate(W/2,425);c.rotate(-0.08);c.scale(sc2,sc2);c.globalAlpha=Math.min(1,k*1.5);
+      c.strokeStyle=col;c.lineWidth=10;rrect(-300,-72,600,144,22);c.stroke();c.fillStyle='rgba(255,255,255,0.7)';rrect(-300,-72,600,144,22);c.fill();
+      const fs=fitText(r.stamp.text,540,84);c.font=`700 ${fs}px P, DJ`;c.textAlign='center';c.textBaseline='middle';c.fillStyle=col;c.fillText(r.stamp.text,0,5);c.restore();}
+    if(t>=R.factT){const a=fade(R.factT,t,0.3)*(1-fade(R.end-0.25,t));factLines(R).forEach((l,i)=>ctxt(l,W/2,555+i*50,fitText(l,980,38),COL.ink,a));}
+    if(R.i>0&&t<R.start+0.3){c.save();c.globalAlpha=1-fade(R.start,t,0.3);c.fillStyle='#fff';c.fillRect(0,0,W,H);c.restore();}
+    return;}
+  if(t<T.explain[0]+0.3){c.save();c.globalAlpha=1-fade(T.explain[0],t,0.3);c.fillStyle='#fff';c.fillRect(0,0,W,H);c.restore();}
+  if(t<T.outro[0]){const e=cfg.explain,t0=T.explain[0];
+    ctxt(e.title,W/2,370,fitText(e.title,960,64),COL.ink,fade(t0,t));
+    e.lines.forEach((l,i)=>ctxt(l,W/2,450+i*58,fitText(l,960,42),i===e.lines.length-1?COL.green:COL.sub,fade(t0+0.8+i*2.0,t,0.3)));return;}
+  const t0=T.outro[0];
+  ctxt('SOURCE',W/2,345,28,COL.sub,fade(t0,t));
+  cfg.source.forEach((l,i)=>ctxt(l,W/2,395+i*48,fitText(l,980,32),COL.ink,fade(t0,t)));
+  if(t>=t0+1.4){const a=fade(t0+1.4,t,0.25),p=pop(t0+1.4,t);
+    c.save();c.translate(W/2,560);c.scale(p,p);panel(-380,-50,760,100,50,COL.brand,a);
+    c.font=`700 ${fitText(cfg.cta,700,42)}px P, DJ`;c.textAlign='center';c.textBaseline='middle';c.globalAlpha=a;c.fillStyle=COL.ink;c.fillText(cfg.cta,0,2);c.restore();}
+  if(t>T.duration-0.35){c.save();c.globalAlpha=fade(T.duration-0.35,t,0.35);c.fillStyle='#fff';c.fillRect(0,0,W,H);c.restore();}
+}
+function labels(s,a){                                   // lane names next to each start, in 3D
+  if(a<=0)return;s.R.lanes.forEach((l,j)=>{const p=project(s,[s.g.xa-0.02,s.g.ya+0.2+(j-1)*0.0,l.z]);
+    const tp=s.balls[j].c;const q=project(s,[tp[0],tp[1]+0.17,tp[2]]);pill(s.R.cfg.kind==='tautochrone'?l.name+' · '+fmt(l.h,1)+' m':l.name,q[0],q[1],26,LANE_COL[j],a);});
+}
+function trails(s){                                    // fading colour trail behind each moving ball
+  const R=s.R, rt=s.rt; if(rt<=0.02||rt>R.Tmax+0.6) return;
+  R.lanes.forEach((l,j)=>{
+    const end=Math.min(rt,l.sim.T), fadeOut=rt>l.sim.T?clamp(1-(rt-l.sim.T)/0.5,0,1):1; if(fadeOut<=0) return;
+    const pts=[];for(let k=2;k<=22;k++){const tk=end-k*0.018;if(tk<0)break;const p=posAt(l.sim,tk);pts.push(project(s,ballCenter(R.g,l.curve,p,l.z)));}
+    for(let k=1;k<pts.length;k++){const a=(1-k/pts.length)*0.75*fadeOut;c.save();c.globalAlpha=a;c.strokeStyle=LANE_COL[j];c.lineCap='round';
+      c.lineWidth=22*(1-k/pts.length)+3;c.beginPath();c.moveTo(...pts[k-1]);c.lineTo(...pts[k]);c.stroke();c.restore();}
+  });
+}
+function timers(R,s,t){
+  const order=R.lanes.map((l,j)=>[l.sim.T,j]).sort((a,b)=>a[0]-b[0]).map(x=>x[1]);
+  R.lanes.forEach((l,j)=>{const x=W/2+(j-1)*330, tt=Math.min(Math.max(s.rt,0),l.sim.T), done=s.rt>=l.sim.T;
+    c.save();c.fillStyle=LANE_COL[j];c.beginPath();c.arc(x-fitW(l.name,26)/2-18,352,9,0,7);c.fill();c.restore();
+    ctxt(l.name,x+6,352,26,COL.sub);
+    const rank=order.indexOf(j);
+    ctxt(fmt(tt,2)+' s',x,425,64,done?(rank===0?COL.green:COL.ink):COL.ink);
+    if(done) ctxt(['1st','2nd','3rd'][rank]||'',x,492,34,rank===0?COL.green:COL.sub);});
+}
+function fitW(s,size){c.font=`700 ${size}px P, DJ`;return c.measureText(s).width;}
+function factLines(R){
+  const r=R.cfg;if(!r.fact_auto) return r.fact||[];
+  const sorted=R.lanes.map(l=>[l.sim.T,l.name]).sort((a,b)=>a[0]-b[0]);
+  return [sorted.map(([T,n])=>n.charAt(0)+n.slice(1).toLowerCase()+' '+fmt(T,2)+' s').join(' · ')].concat(r.fact||[]);
+}
+
+// ---------------------------------------------------------------- API used by render.js
+let CFG=null,TL=null;
+window.setup=function(cfg){CFG=cfg;DEC=cfg.decimal||'.';TL=buildTimeline(cfg);
+  const rounds=TL.rounds.map(R=>({title:R.cfg.title,times:R.lanes.map(l=>({name:l.name,T:+l.sim.T.toFixed(4)}))}));
+  return {duration:TL.duration,events:TL.events,rounds};};
+window.renderFrame=function(t,type='image/jpeg'){
+  const s=sceneState(TL,t), g=s.g, lanes=s.R.lanes;
+  gl.viewport(0,0,1080,1920);gl.uniform2f(U.R,1080,1920);
+  gl.uniform1f(U.camAng,s.camAng);gl.uniform1f(U.camDist,s.camDist);gl.uniform1f(U.camH,s.camH);gl.uniform1f(U.camTY,s.camTY);
+  gl.uniform2f(U.shake,s.shake[0],s.shake[1]);gl.uniform4f(U.geo,g.xa,g.ya,g.xb,g.yb);gl.uniform2f(U.cyc,g.R,g.thB);
+  gl.uniform3f(U.ctype,CT[lanes[0].curve],CT[lanes[1].curve],CT[lanes[2].curve]);
+  gl.uniform3f(U.bpos0,...s.balls[0].c);gl.uniform3f(U.bpos1,...s.balls[1].c);gl.uniform3f(U.bpos2,...s.balls[2].c);
+  gl.uniform3f(U.bang,s.balls[0].ang,s.balls[1].ang,s.balls[2].ang);gl.uniform1f(U.showBalls,s.showBalls);
+  ['tops0','tops1','tops2'].forEach((n,j)=>gl.uniform4fv(U[n],new Float32Array(postTops(g,lanes[j].curve))));
+  gl.drawArrays(gl.TRIANGLES,0,3);gl.finish();
+  c.imageSmoothingQuality='high';c.drawImage(document.getElementById('gl'),0,0,W,H);
+  overlay(CFG,TL,t,s);
+  return out.toDataURL(type,0.93);
+};
+window.ready=Promise.all([document.fonts.load('700 40px P'),document.fonts.load('700 40px DJ')]).then(()=>true);
+</script>
+</body></html>
