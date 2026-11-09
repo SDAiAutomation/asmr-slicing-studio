@@ -104,6 +104,11 @@ jobs:
                 "random_seed": int(seed) if seed else random.randint(1, 10**6),
               }
               quality = "${{ inputs.quality || 'preview' }}"
+          if quality == "hd":  # sharper than preview, still fits the free CPU runners
+              cfg.setdefault("preview_resolution", [720, 1280])
+              cfg.setdefault("preview_samples", 20)
+              cfg.setdefault("fps", 24)
+              cfg.setdefault("export_resolution", [1080, 1920])
           # TikTok only pays (Creator Rewards) for videos over 1 minute: aim for 62 s unless set
           cfg.setdefault("video_duration", 62)
           n = cfg["target_piece_count"]

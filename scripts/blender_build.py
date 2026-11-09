@@ -912,7 +912,7 @@ def setup_render(scn, cfg, out_dir, final):
         scn.render.engine = "CYCLES"
         c = scn.cycles
         c.device = "CPU"
-        c.samples = cfg["cycles_samples"] if final else 12
+        c.samples = cfg["cycles_samples"] if final else cfg.get("preview_samples", 12)
         c.use_adaptive_sampling = True
         c.adaptive_threshold = 0.04 if final else 0.08
         c.use_denoising = True
@@ -991,7 +991,8 @@ def main():
                      "02_cut_in_progress": (mid["strokes_start"] + mid["strokes_end"]) // 2,
                      "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
                      "04_final": lv[-1]["collapse_end"] + 4}
-            sheet = [(l["level"], l["collapse_end"] + 2) for l in lv]
+            # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
+            sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
         else:
             hits, strokes = plan["hits"], plan["strokes"]
             mid_hit = hits[min(len(hits) - 1, plan["strokes"][min(2, len(strokes) - 1)]["hits"][0])]

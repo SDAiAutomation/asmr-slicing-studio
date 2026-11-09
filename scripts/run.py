@@ -139,7 +139,7 @@ def cmd_preview(config_path):
         json.dump(cfg, f, indent=1)
     perf = {}
     plan_path = os.path.join(rd, "plan.json")
-    planner = "plan_grid.py" if cfg["format"] == "grid" else "plan_cuts.py"
+    planner = "plan_grid.py" if cfg["format"] in ("grid", "levitate") else "plan_cuts.py"
     plan_stats, perf["plan_s"] = run_py(planner, os.path.join(rd, "config.json"), plan_path)
     audio, perf["audio_s"] = run_py("make_audio.py", plan_path, rd)
     rep, perf["blender_build_and_previews_s"] = run_blender(
@@ -204,6 +204,8 @@ def cmd_export(rd):
     subprocess.run([t["ffmpeg"], "-y", "-v", "error", "-framerate", str(fps), "-start_number", "1",
                     "-i", os.path.join(rd, "frames", "f_%05d.png"),
                     "-i", os.path.join(rd, "soundtrack.wav"),
+                    *(["-vf", "scale={}:{}:flags=lanczos".format(*plan["config"]["export_resolution"])]
+                      if plan["config"].get("export_resolution") else []),
                     "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
                     "-r", str(fps), "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                     "-movflags", "+faststart", "-shortest", mp4], check=True)
@@ -278,7 +280,7 @@ def main():
         with open(os.path.join(sys.argv[2], "plan.json"), encoding="utf-8") as f:
             total = json.load(f)["total_frames"]
         per = int(sys.argv[3]) if len(sys.argv) > 3 else 60
-        n = max(1, min(16, -(-total // per)))
+        n = max(1, min(20, -(-total // per)))   # 20 = GitHub's concurrent job limit
         step = -(-total // n)
         print(json.dumps([f"{s}-{min(total, s + step - 1)}" for s in range(1, total + 1, step)]))
     elif c == "export":
