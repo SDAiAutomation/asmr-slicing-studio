@@ -373,14 +373,15 @@ def _asset(name):
 
 
 def board_material():
-    """Photo-scanned wood (Poly Haven, CC0) when available, procedural grain otherwise."""
+    """The channel's signature board: clean, light maple with a fine straight grain.
+    Deliberately procedural, so it is identical in every video."""
     mat, nt, bsdf = principled("Board")
     L = nt.links
     tc = nt.nodes.new("ShaderNodeTexCoord")
     mp = nt.nodes.new("ShaderNodeMapping")
     mp.inputs["Scale"].default_value = (2.2, 2.2, 2.2)
     L.new(tc.outputs["Object"], mp.inputs["Vector"])
-    diff = _asset("wood_diff.jpg")
+    diff = None  # photo textures looked worn and varied with the download
     if diff:
         def img(path, colorspace):
             t = nt.nodes.new("ShaderNodeTexImage")
@@ -402,19 +403,19 @@ def board_material():
         wave = nt.nodes.new("ShaderNodeTexWave")
         wave.bands_direction = "X"
         set_input(wave, "Scale", 18.0)
-        set_input(wave, "Distortion", 2.5)
+        set_input(wave, "Distortion", 0.8)
         set_input(wave, "Detail", 8.0)
         set_input(wave, "Detail Roughness", 0.7)
         sc = nt.nodes.new("ShaderNodeMapping")
         sc.inputs["Scale"].default_value = (0.25, 4.0, 4.0)  # long grain along the board
         L.new(mp.outputs["Vector"], sc.inputs["Vector"])
         L.new(sc.outputs["Vector"], wave.inputs["Vector"])
-        r = ramp(nt, [(0.0, (0.42, 0.25, 0.12)), (0.6, (0.55, 0.36, 0.19)), (1.0, (0.36, 0.20, 0.09))])
+        r = ramp(nt, [(0.0, (0.60, 0.40, 0.21)), (0.6, (0.72, 0.51, 0.29)), (1.0, (0.56, 0.37, 0.19))])
         L.new(wave.outputs["Fac"], r.inputs["Fac"])
         L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
-        set_input(bsdf, "Roughness", 0.55)
+        set_input(bsdf, "Roughness", 0.42)
         bump = nt.nodes.new("ShaderNodeBump")
-        set_input(bump, "Strength", 0.08)
+        set_input(bump, "Strength", 0.02)
         L.new(wave.outputs["Fac"], bump.inputs["Height"])
         L.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
     return mat
@@ -475,18 +476,21 @@ def board_brand(text, size):
     f = _bold_font()
     if f:
         cu.font = f
-    cu.size = max(0.016, d * 0.075)
+    cu.size = max(0.020, d * 0.085)
     cu.align_x, cu.align_y = "LEFT", "BOTTOM"
     cu.extrude = 0.00008
     ob = bpy.data.objects.new("BoardBrand", cu)
     bpy.context.scene.collection.objects.link(ob)
     ob.location = (-w / 2 + 0.03, -d / 2 + 0.018, 0.00012)
-    mat = simple_mat("BurnedWood", (0.075, 0.035, 0.015), 0.85)
+    mat = simple_mat("BurnedWood", (0.02, 0.009, 0.004), 0.7)
     cu.materials.append(mat)
     return ob
 
 
-def setup_environment(scn, board_size=(0.46, 0.34), brand=""):
+BOARD_SIZE = (0.40, 0.27)  # same board in every video: it is the channel's signature
+
+
+def setup_environment(scn, board_size=BOARD_SIZE, brand=""):
     """Realistic tabletop: wooden cutting board on a dark surface, studio HDRI light."""
     board = cutting_board(board_size)
     if brand:

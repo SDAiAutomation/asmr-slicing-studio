@@ -452,8 +452,7 @@ def build_grid_scene(plan, out_dir):
     scn.frame_start, scn.frame_end = 1, plan["total_frames"]
     lo, hi = shape.bbox()
     span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
-    board_w = max(0.36, span * 1.75)
-    board_size = (board_w, board_w * 0.66)
+    board_size = B.BOARD_SIZE
     B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
 
     levitate = cfg["format"] == "levitate"
