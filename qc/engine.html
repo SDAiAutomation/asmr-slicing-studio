@@ -13,11 +13,12 @@ html,body{margin:0;background:#000}canvas{display:block}
 <script id="fs" type="x-shader/x-fragment">
 precision highp float;
 uniform vec2 R;
-uniform float mode;      // 0 compression, 1 traction, 2 showcase (reinforced beam)
+uniform float mode;      // 0 compression, 1 traction, 2 showcase, 3 drop test
 uniform float spec;      // 0 egg side, 1 egg up, 2 cube, 3 prism
 uniform float plateY, jawY, snap, squash, crackAmt, broken, tb, camAng, camDist, camH, eggOff;
 uniform vec2 shake;
 uniform float camTY;
+uniform float dropL, dropR, trap, dcrack, leak, rockR, dropH;   // drop round
 uniform vec3 fpos[14];
 uniform vec2 fang[14];
 uniform float fcount, fconcrete;
@@ -43,8 +44,8 @@ vec2 specimen(vec3 p){
       res=vec2(sdEll(e,vec3(e.x>0.0?0.31:0.255,ry,0.2+0.1*(1.0-squash))),7.0);
     } else {
       float s=smoothstep(0.0,0.35,tb);
-      res=opU(res,vec2(sdEll(p-vec3(0.02,0.425,0.02),vec3(0.36+0.16*s,0.018,0.28+0.12*s)),9.0));
-      res=opU(res,vec2(sdEll(p-vec3(0.10,0.43,0.28+0.06*s),vec3(0.12,0.04,0.10)*(0.4+0.6*s)),8.0));
+      res=opU(res,vec2(sdEll(p-vec3(0.02,0.428,0.04),vec3(0.36+0.30*s,0.017,0.28+0.24*s)),9.0));
+      res=opU(res,vec2(sdEll(p-vec3(0.12,0.437,0.30+0.12*s),vec3(0.15,0.045,0.12)*(0.4+0.6*s)),8.0));
     }
   } else if(spec<1.5){              // egg standing
     if(broken<0.5){
@@ -52,8 +53,8 @@ vec2 specimen(vec3 p){
       res=vec2(sdEll(e,vec3(0.2,(e.y>0.0?0.31:0.25)*k,0.2)),7.0);
     } else {
       float s=smoothstep(0.0,0.35,tb);
-      res=opU(res,vec2(sdEll(p-vec3(0.02,0.425,0.02),vec3(0.34+0.14*s,0.018,0.28+0.12*s)),9.0));
-      res=opU(res,vec2(sdEll(p-vec3(-0.08,0.43,0.27+0.06*s),vec3(0.12,0.04,0.10)*(0.4+0.6*s)),8.0));
+      res=opU(res,vec2(sdEll(p-vec3(0.02,0.428,0.04),vec3(0.34+0.30*s,0.017,0.28+0.24*s)),9.0));
+      res=opU(res,vec2(sdEll(p-vec3(-0.10,0.437,0.30+0.12*s),vec3(0.15,0.045,0.12)*(0.4+0.6*s)),8.0));
     }
   } else if(spec<2.5){              // concrete cube under compression
     float hc=CUBE*squash;
@@ -87,7 +88,19 @@ vec2 specimen(vec3 p){
 vec2 map(vec3 p){
   vec2 res=vec2(p.y,1.0);
   res=opU(res,vec2(sdRoundBox(p-vec3(0,0.15,0),vec3(1.1,0.12,0.7),0.03),2.0));
-  if(mode<1.5){
+  if(mode>2.5){
+    // drop test: wide steel plate, two eggs released from trap doors dropH above it
+    res=opU(res,vec2(sdRoundBox(p-vec3(0,0.36,0),vec3(0.85,0.04,0.36),0.02),3.0));
+    vec3 tp=p; tp.x=abs(tp.x)-0.42;
+    res=opU(res,vec2(sdRoundBox(tp-vec3(0,0.42+dropH-0.012,-trap*0.55),vec3(0.21,0.01,0.21),0.004),5.0));
+    vec3 pl=p; pl.x=abs(pl.x)-0.42; pl.z+=0.3;          // posts holding the trap doors
+    res=opU(res,vec2(sdCylY(pl-vec3(0,0.42+dropH*0.5+0.02,0),dropH*0.5+0.02,0.018),4.0));
+    vec3 a=p-vec3(-0.42,0.42+0.25+dropL,0.0);
+    res=opU(res,vec2(sdEll(a,vec3(0.2,a.y>0.0?0.31:0.25,0.2)),7.0));
+    vec3 b=p-vec3(0.42,0.42+0.2+dropR,0.0); b.xy=rot(rockR)*b.xy;
+    res=opU(res,vec2(sdEll(b,vec3(b.x>0.0?0.31:0.255,0.2,0.2)),7.0));
+    if(leak>0.0) res=opU(res,vec2(sdEll(p-vec3(-0.36,0.425,0.13),vec3(0.05+0.17*leak,0.011,0.04+0.13*leak)),9.0));
+  } else if(mode<1.5){
     res=opU(res,vec2(sdRoundBox(p-vec3(0,0.36,0),vec3(0.43,0.04,0.33),0.02),3.0));
     vec3 q=p; q.x=abs(q.x)-0.85;
     res=opU(res,vec2(sdCylY(q-vec3(0,1.08,0),0.78,0.06),4.0));
@@ -213,9 +226,17 @@ void main(){
       }
       else if(m<6.5){ alb=vec3(0.22,0.23,0.25); spec_=0.8; gloss=60.0; refl=0.35; }
       else if(m<7.5){
-        alb=vec3(0.93,0.80,0.63)*(0.97+0.03*hash3(floor(p*140.0)));
+        alb=vec3(0.97,0.88,0.74)*(0.97+0.03*hash3(floor(p*140.0)));
         vec3 e=p-vec3(0.0,0.62,0.0);
-        if(crackAmt>0.0){
+        if(mode>2.5){
+          vec3 f=p-vec3(-0.42,0.67+dropL,0.0);
+          if(p.x<0.0 && dcrack>0.0 && f.z>0.0 && f.y<0.12*dcrack){
+            float w=0.004+0.003*dcrack;
+            float c1=abs(f.x+0.03*sin(f.y*55.0)+0.012*sin(f.y*140.0));
+            float c2=abs(f.x-0.07-0.5*(f.y+0.2)+0.02*sin(f.y*80.0));
+            if(c1<w || (c2<w*0.8 && f.y<-0.02)) alb*=0.22;
+          }
+        } else if(crackAmt>0.0){
           float zz=(spec<0.5? e.z : e.x)-0.035*sin((spec<0.5?e.x:e.y)*38.0)-0.012*sin((spec<0.5?e.x:e.y)*97.0);
           float w=0.0035+0.004*crackAmt;
           if(abs(zz)<w && abs(spec<0.5?e.x:e.y-0.1)<crackAmt*0.27 && (spec<0.5?e.y>-0.05:e.z>0.0)) alb*=0.25;
@@ -224,7 +245,7 @@ void main(){
       }
       else if(m<8.5){ alb=vec3(1.0,0.62,0.08); spec_=1.2; gloss=80.0; refl=0.15; }
       else if(m<9.5){ alb=vec3(0.96,0.95,0.86); spec_=1.4; gloss=120.0; refl=0.35; }
-      else if(m<10.5){ alb=vec3(0.95,0.85,0.70); spec_=0.2; }
+      else if(m<10.5){ alb=vec3(0.99,0.95,0.88); spec_=0.3; }
       else if(m<12.5){
         alb=concrete(p, m>11.5?1.0:0.0); spec_=0.04; gloss=8.0;
         if(m<11.5 && crackAmt>0.0){
@@ -263,14 +284,28 @@ const SPEC={egg_side:0,egg_up:1,cube:2,prism:3};
 
 // ---------------------------------------------------------------- timeline
 // Every duration lives here; qc/audio.py reads the exported events, so sound stays in sync.
-const D={hook:2.0,title:1.0,approach:1.4,ramp:1.5,hold:1.3,question:2.6,final:1.8,settle:0.9,replay:2.4,stampHold:1.0,fact:3.4,explain:10.0,outro:5.0};
+const D={hook:2.2,title:0.8,approach:0.9,ramp:1.0,hold:0.7,question:2.4,final:1.3,settle:0.8,replay:2.4,stampHold:0.9,fact:2.6,explain:6.5,outro:4.5};
+const DROP={show:0.6,hold:0.4,fall:0.15,settle:1.6,fact:3.0};
 // slow-motion replay of the break: shows [break-0.45 s, break+0.27 s] at 0.3x speed
 const RP={before:0.45,speed:0.3};
 function buildTimeline(cfg){
   const T={rounds:[],events:[]};let t=0;
   T.hook=[0,D.hook];t=D.hook;
   cfg.rounds.forEach((r,i)=>{
-    const R={cfg:r,i,start:t};
+    const R={cfg:r,i,start:t,rpBefore:RP.before,rpSpeed:RP.speed};
+    if(r.kind==='drop'){                      // drop test: no load ramp, eggs fall from drop_mm
+      R.titleEnd=t+D.title;R.approachEnd=R.titleEnd;R.keys=[[t,0]];R.steps=[];
+      T.events.push({type:'round',t:t});
+      R.qStart=R.titleEnd+DROP.show;R.qEnd=R.qStart+D.question;T.events.push({type:'question',t0:R.qStart,t1:R.qEnd});
+      R.dropT=R.qEnd+DROP.hold;T.events.push({type:'drop',t:R.dropT});
+      R.breakT=R.dropT+DROP.fall;T.events.push({type:'break',t:R.breakT,material:'egg',kind:'drop',specimen:'egg_pair'});
+      R.rpBefore=0.13;R.rpSpeed=0.12;
+      R.replayT0=R.breakT+DROP.settle;R.replayT1=R.replayT0+D.replay;
+      T.events.push({type:'replay',t0:R.replayT0,t1:R.replayT1,tbreak:R.replayT0+R.rpBefore/R.rpSpeed,material:'egg',kind:'drop'});
+      R.stampT=R.replayT1+0.1;T.events.push({type:'stamp',t:R.stampT,color:r.stamp.color});
+      R.factT=R.stampT+D.stampHold;T.events.push({type:'card',t:R.factT});
+      R.end=R.factT+DROP.fact;t=R.end;T.rounds.push(R);return;
+    }
     R.titleEnd=t+D.title; R.approachEnd=R.titleEnd+D.approach;
     T.events.push({type:'round',t:t});
     T.events.push({type:'approach',t0:R.titleEnd,t1:R.approachEnd,kind:r.kind});
@@ -286,7 +321,7 @@ function buildTimeline(cfg){
     c+=D.final;R.keys.push([c,r.break_value]);R.breakT=c;
     T.events.push({type:'break',t:c,material:r.material,kind:r.kind,specimen:r.specimen});
     R.replayT0=c+D.settle;R.replayT1=R.replayT0+D.replay;
-    T.events.push({type:'replay',t0:R.replayT0,t1:R.replayT1,tbreak:R.replayT0+RP.before/RP.speed,material:r.material,kind:r.kind});
+    T.events.push({type:'replay',t0:R.replayT0,t1:R.replayT1,tbreak:R.replayT0+R.rpBefore/R.rpSpeed,material:r.material,kind:r.kind});
     R.stampT=R.replayT1+0.1;T.events.push({type:'stamp',t:R.stampT,color:r.stamp.color});
     R.factT=R.stampT+D.stampHold;T.events.push({type:'card',t:R.factT});
     R.end=R.factT+D.fact;t=R.end;T.rounds.push(R);
@@ -308,6 +343,7 @@ function frags(tb,specName,mode){
   const P=[],A=[];let n=12,y0=0.58,conc=false,vS=1.0,vyS=1.0,r0=0.2;
   if(specName==='cube'){n=14;y0=0.62;conc=true;vS=1.0;vyS=0.9;r0=0.2;}
   if(specName==='prism'){n=6;y0=0.93;conc=true;vS=0.7;vyS=0.6;r0=0.12;}
+  if(specName==='egg_up'||specName==='egg_side'){n=14;vS=1.3;vyS=1.15;}
   if(specName==='egg_up'){y0=0.7;}
   for(let i=0;i<14;i++){
     if(i>=n){P.push(0,-10,0);A.push(0,0);continue;}
@@ -327,10 +363,25 @@ function sceneState(T,t){
   for(const r of T.rounds) if(t>=r.start) R=r;
   const showcase=t>=T.explain[0]&&t<T.outro[0];
   const outro=t>=T.outro[0];
-  const r=R.cfg, spec=r.specimen, kind=r.kind;
+  const r=R.cfg, spec=r.specimen||'egg_up', kind=r.kind;
   const tReal=t, replay=t>=R.replayT0&&t<R.replayT1;
-  if(replay) t=R.breakT-RP.before+(t-R.replayT0)*RP.speed;
-  const s={mode:kind==='traction'?1:0,spec:SPEC[spec],plateY:1.3,jawY:0.0,snap:0,squash:1,crackAmt:0,broken:0,tb:0,eggOff:0,shake:[0,0],frag:null};
+  if(replay) t=R.breakT-R.rpBefore+(t-R.replayT0)*R.rpSpeed;
+  if(kind==='drop'&&!(showcase||outro)){
+    const H=(r.drop_mm||8)*0.0098, s={mode:3,spec:-3,plateY:1.3,jawY:0,snap:0,squash:1,crackAmt:0,broken:0,tb:0,eggOff:0,shake:[0,0],frag:null,
+      dropH:H,trap:0,dropL:H,dropR:H,dcrack:0,leak:0,rockR:0};
+    s.trap=sm(R.dropT,R.dropT+0.06,t);
+    const f=t-R.dropT;
+    if(f>0){const y=Math.max(0,H-0.5*98*f*f);s.dropL=y;s.dropR=y;}
+    const ti=t-R.breakT;
+    if(ti>=0){s.dcrack=sm(0,0.08,ti);s.leak=sm(0.15,1.6,ti);
+      s.dropR=0.028*Math.abs(Math.sin(ti*14))*Math.exp(-ti*5);s.rockR=0.12*Math.sin(ti*11)*Math.exp(-ti*3);
+      const d=Math.exp(-ti*9)*0.02;s.shake=[Math.sin(ti*90)*d,Math.cos(ti*77)*d];}
+    const lt=tReal-R.start;
+    s.camAng=0.12*Math.sin(lt*0.25);s.camDist=lerp(3.4,2.9,sm(0,R.qEnd-R.start,lt));s.camH=0.45;s.camTY=0.98;
+    if(replay){const k=tReal-R.replayT0;s.camAng=0.08+0.05*k;s.camDist=2.6;s.camH=0.1;s.camTY=0.78;}
+    s.replay=replay;s.R=R;s.L=0;return s;
+  }
+  const s={mode:kind==='traction'?1:0,spec:SPEC[spec],dropH:0,trap:0,dropL:0,dropR:0,dcrack:0,leak:0,rockR:0,plateY:1.3,jawY:0.0,snap:0,squash:1,crackAmt:0,broken:0,tb:0,eggOff:0,shake:[0,0],frag:null};
   const L=valueAt(R,t), frac=L/r.break_value;
   const broken=t>=R.breakT; s.broken=broken?1:0; s.tb=Math.max(0,t-R.breakT);
   if(kind==='compression'){
@@ -354,12 +405,12 @@ function sceneState(T,t){
   s.camAng=0.62+0.10*Math.sin(lt*0.22)-0.05*sm(0,20,lt)+(R.i%2?-0.25:0);
   s.camDist=lerp(5.5,5.0,sm(0,8,lt))-0.3*sm(R.qStart,R.qEnd,t)+0.3*sm(R.breakT,R.breakT+1.2,t);
   s.camH=0.75;s.camTY=1.48;
-  if(spec.startsWith('egg')){s.camDist-=0.9;s.camTY=1.22;s.camH=0.6;}
+  if(spec.startsWith('egg')){s.camDist-=0.9;s.camTY=1.32;s.camH=0.6;}
   if(replay){const k=tReal-R.replayT0;s.camAng=0.95+0.10*k+(R.i%2?-0.45:0);s.camDist=2.9-0.08*k;s.camH=0.08;s.camTY=kind==='traction'?0.98:(spec==='egg_up'?0.7:0.62);s.shake=[s.shake[0]*0.5,s.shake[1]*0.5];}
   s.replay=replay;
   if(showcase||outro){
     const lt2=t-T.explain[0];
-    s.mode=2;s.spec=-1;s.broken=0;s.frag=null;s.shake=[0,0];s.crackAmt=0;
+    s.mode=2;s.spec=-1;s.broken=0;s.frag=null;s.shake=[0,0];s.crackAmt=0;s.dropH=0;s.trap=0;s.dropL=0;s.dropR=0;s.dcrack=0;s.leak=0;s.rockR=0;
     s.camAng=0.5+0.35*Math.sin(lt2*0.18);s.camDist=lerp(3.6,3.2,sm(0,15,lt2));s.camH=1.0;s.camTY=1.25;
     if(CFG.explain&&CFG.explain.scene==='egg_pair'){s.spec=-2;s.camAng=0.25*Math.sin(lt2*0.2);s.camDist=lerp(3.5,3.2,sm(0,15,lt2));s.camH=0.6;s.camTY=1.12;}
   }
@@ -376,7 +427,7 @@ gl.linkProgram(prog);gl.useProgram(prog);
 const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
 gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
 const al=gl.getAttribLocation(prog,'a');gl.enableVertexAttribArray(al);gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
-const U={};['R','mode','spec','plateY','jawY','snap','squash','crackAmt','broken','tb','camAng','camDist','camH','camTY','eggOff','shake','fpos','fang','fcount','fconcrete'].forEach(n=>U[n]=gl.getUniformLocation(prog,n));
+const U={};['R','mode','spec','plateY','jawY','snap','squash','crackAmt','broken','tb','camAng','camDist','camH','camTY','eggOff','shake','fpos','fang','fcount','fconcrete','dropL','dropR','trap','dcrack','leak','rockR','dropH'].forEach(n=>U[n]=gl.getUniformLocation(prog,n));
 const CUBE=0.22;
 
 // ---------------------------------------------------------------- overlay
@@ -418,6 +469,8 @@ function overlay(cfg,T,t,s){
       const a=fade(R.qStart,t)*(1-fade(R.qEnd-0.25,t)),p=1+0.05*Math.sin((t-R.qStart)*Math.PI*4);
       c.save();c.translate(W/2,420);c.scale(p,p);ctxt(r.question,0,0,fitText(r.question,960,120),COL.red,a);c.restore();
       ctxt(r.question_sub+'  '+Math.max(1,Math.ceil(D.question-0.2-(t-R.qStart))),W/2,525,fitText(r.question_sub,900,40),COL.ink,a);
+    } else if(!stampOn&&!s.replay&&r.kind==='drop'){
+      ctxt(r.label||'DROP',W/2,350,30,COL.sub);ctxt(r.value_text||((r.drop_mm||8)+' mm'),W/2,430,130,COL.ink);
     } else if(!stampOn&&!s.replay){
       const sc=broke?pop(R.breakT,t):1;
       const vcol=broke?(r.stamp.color==='green'?COL.green:COL.red):(s.L>=r.steps[r.steps.length-1]-1e-6?'#E38A12':COL.ink);
@@ -471,7 +524,7 @@ window.setup=function(cfg){CFG=cfg;DEC=cfg.decimal||',';TL=buildTimeline(cfg);re
 window.renderFrame=function(t,type='image/jpeg'){
   const s=sceneState(TL,t);
   gl.viewport(0,0,720,1280);gl.uniform2f(U.R,720,1280);
-  ['mode','spec','plateY','jawY','snap','squash','crackAmt','broken','tb','camAng','camDist','camH','camTY','eggOff'].forEach(k=>gl.uniform1f(U[k],s[k]));
+  ['mode','spec','plateY','jawY','snap','squash','crackAmt','broken','tb','camAng','camDist','camH','camTY','eggOff','dropL','dropR','trap','dcrack','leak','rockR','dropH'].forEach(k=>gl.uniform1f(U[k],s[k]||0));
   gl.uniform2f(U.shake,s.shake[0],s.shake[1]);
   const fr=s.frag||{P:new Array(42).fill(-10),A:new Array(28).fill(0),n:0,conc:false};
   gl.uniform3fv(U.fpos,new Float32Array(fr.P));gl.uniform2fv(U.fang,new Float32Array(fr.A));

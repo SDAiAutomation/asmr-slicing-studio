@@ -3,7 +3,10 @@
   "series": "QUALITY CONTROL · TEST 002",
   "decimal": ".",
   "handle": "@BreakpointLabTV",
-  "hook": ["Egg: standing or lying?", "Which one is stronger?"],
+  "hook": [
+    "Egg: standing or lying?",
+    "Which one is stronger?"
+  ],
   "hook_sub": "Guess in the comments ↓",
   "replay_label": "SLOW-MO",
   "rounds": [
@@ -16,15 +19,24 @@
       "unit": "kg",
       "decimals": 1,
       "gauge_max": 6,
-      "steps": [1.5, 3, 4],
+      "steps": [
+        1.5,
+        3,
+        4
+      ],
       "question_value": 5,
       "question": "5 kg?",
       "question_sub": "YES or NO ↓",
       "break_value": 4.7,
       "threshold": null,
-      "stamp": {"text": "4.7 kg", "color": "green"},
+      "stamp": {
+        "text": "4.7 kg",
+        "color": "green"
+      },
       "result_chip": "4.7 kg",
-      "fact": ["Lab average: 46.0 N ≈ 4.7 kg"]
+      "fact": [
+        "Lab average: 46.0 N ≈ 4.7 kg"
+      ]
     },
     {
       "title": "ROUND 2 · LYING",
@@ -35,25 +47,59 @@
       "unit": "kg",
       "decimals": 1,
       "gauge_max": 6,
-      "steps": [1.5, 3, 4],
+      "steps": [
+        1.5,
+        3,
+        4
+      ],
       "question_value": 5,
       "question": "Weaker?",
       "question_sub": "Most people say YES ↓",
       "break_value": 4.6,
       "threshold": null,
-      "stamp": {"text": "IT'S A TIE", "color": "red"},
+      "stamp": {
+        "text": "IT'S A TIE",
+        "color": "red"
+      },
       "result_chip": "4.6 kg",
-      "fact": ["Lab average: 45.2 N ≈ 4.6 kg"]
+      "fact": [
+        "Lab average: 45.2 N ≈ 4.6 kg"
+      ]
+    },
+    {
+      "title": "ROUND 3 · DROP",
+      "kind": "drop",
+      "material": "egg",
+      "label": "DROP",
+      "drop_mm": 8,
+      "value_text": "8 mm",
+      "question": "Which one cracks?",
+      "question_sub": "LEFT or RIGHT ↓",
+      "stamp": {
+        "text": "LYING WINS",
+        "color": "green"
+      },
+      "fact": [
+        "8 mm drop · standing: over half crack",
+        "Lying: under 10% crack"
+      ]
     }
   ],
   "explain": {
     "scene": "egg_pair",
-    "title": "SO WHAT'S DIFFERENT?",
-    "lines": ["Squeezed: same strength", "Dropped: lying egg survives more", "It flexes and absorbs the shock"]
+    "title": "WHY?",
+    "lines": [
+      "Squeezed: it's a tie",
+      "Dropped: lying egg wins",
+      "It flexes and soaks up the shock"
+    ]
   },
-  "source": ["Sutanto et al., Communications Physics (2025), MIT", "Simulated test at published lab averages"],
+  "source": [
+    "Sutanto et al., Communications Physics (2025), MIT",
+    "Simulated test at published lab averages"
+  ],
   "cta": "NEXT TEST? Comment ↓",
-  "caption": "Standing egg vs lying egg under a press 🥚 Which one did you pick? MIT tested it: same strength when squeezed, but the lying egg survives drops better. What should we test next? 👇 #egg #physics #science #engineering #satisfying #mythbusting #3d",
+  "caption": "Standing egg vs lying egg 🥚 Squeezed: a tie. Dropped: not even close. Which one did you pick? (MIT, 2025) What should we test next? 👇 #egg #physics #science #engineering #satisfying #mythbusting #3d",
   "sources_detail": [
     "Sutanto, Cohen et al., 'Challenging common notions on how eggs break and the role of strength versus toughness', Communications Physics 8, 2025 (MIT)",
     "Static compression to first crack: vertical 46.0 +/- 6.6 N, horizontal 45.2 +/- 5.5 N; 46.0/9.81 = 4.69 kg, 45.2/9.81 = 4.61 kg",

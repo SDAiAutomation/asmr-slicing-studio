@@ -103,6 +103,14 @@ def main(tl_path, out_path):
                 k += 1
             q = (tt > e["t0"]) & (tt < e["t1"])
             out[q] += np.sin(2 * np.pi * (60 + 30 * sm(e["t0"], e["t1"], tt[q])) * tt[q]) * 0.08 * sm(e["t0"], e["t1"], tt[q])
+        elif ty == "drop":                                         # trap doors snap open
+            m = int(0.06 * SR)
+            add(lp(rng.standard_normal(m), 0.6) * env(m, 0.0005, 0.01), e["t"], 0.5)
+        elif ty == "break" and e.get("kind") == "drop":            # small impact: tick + one shell crack
+            n = int(0.4 * SR)
+            t = np.arange(n) / SR
+            add(np.sin(2 * np.pi * (180 - 60 * t) * t) * env(n, 0.001, 0.05), e["t"], 0.6)
+            add(lp(rng.standard_normal(n), 0.7) * env(n, 0.0003, 0.018), e["t"], 0.8)
         elif ty == "break":
             t_b = e["t"]
             for k in range(14):                                       # stress creaks
