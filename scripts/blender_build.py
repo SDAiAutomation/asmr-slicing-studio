@@ -349,6 +349,12 @@ def key_location(obj, keys):
         obj.keyframe_insert("location", frame=f)
 
 
+# ---------------------------------------------------------------------------
+# scene
+# ---------------------------------------------------------------------------
+ASSETS = os.path.join(HERE, "..", "assets", "cache")
+
+
 def _asset(name):
     p = os.path.join(ASSETS, name)
     return p if os.path.exists(p) else None
