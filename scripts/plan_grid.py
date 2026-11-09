@@ -40,12 +40,18 @@ def split_cuts(ext, C):
     return cuts
 
 
-def progressive_cuts(C):
-    """Most cuts go to the X sweep: those are the ones that visibly detach a slice."""
-    x = max(1, int(round(C * 0.6)))
-    rest = C - x
-    y = int(np.ceil(rest * 0.6))
-    return np.array([x, y, rest - y])
+def progressive_cuts(ext, C):
+    """Near-cubic pieces (no sticks), but at least 40 % of the cuts are sweep cuts on X:
+    those are the ones that visibly detach a slice."""
+    cuts = split_cuts(ext, C).copy()
+    need = max(1, int(np.ceil(0.4 * C)))
+    while cuts[0] < need:
+        a = 1 if cuts[1] >= cuts[2] and cuts[1] > 0 else 2
+        if cuts[a] == 0:
+            break
+        cuts[a] -= 1
+        cuts[0] += 1
+    return cuts
 
 
 def count_by_starts(occ, starts):
@@ -108,7 +114,7 @@ def _plan(cfg, ts=1.0):
     intro = int(0.4 * fps)   # first cut within half a second: the hook is the action itself
     for li, C in enumerate(cfg["cuts_sequence"]):
         progressive = bool(cfg.get("progressive_release")) and levitate
-        cuts = progressive_cuts(C) if progressive else split_cuts(ext, C)
+        cuts = progressive_cuts(ext, C) if progressive else split_cuts(ext, C)
         n = cuts + 1
         if int(np.prod(n)) > 4 * cfg["max_cubes"]:
             break

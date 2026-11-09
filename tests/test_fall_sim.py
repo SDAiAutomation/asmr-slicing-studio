@@ -18,7 +18,7 @@ def test_lands_on_the_board_never_through_it():
 
 
 def columns(f, c, co):
-    size = max(c[0], c[1]) * 1.02
+    size = np.asarray(c[:2], float) * 1.02
     centre = co[:, :2].mean(0)
     out = {}
     for i, k in enumerate(map(tuple, np.rint((np.asarray(f["target"][:, :2], float) - centre) / size).astype(int))):
@@ -87,3 +87,13 @@ def test_progressive_release_lands_in_release_order():
     assert (f["delay"] >= rel - 1e-6).all() and ((f["delay"] + f["span"]) <= 1.0 + 1e-5).all()
     land = f["delay"] + f["span"] * F.LAND_U
     assert np.corrcoef(rel, land)[0, 1] > 0.8
+
+
+def test_flat_wide_pieces_do_not_build_a_tower():
+    a = np.array([-0.08, -0.025, 0.025, 0.08])
+    x, y, z = np.meshgrid(np.linspace(-0.09, 0.09, 6), [-0.05, 0.05], [0.02, 0.06], indexing="ij")
+    co = np.column_stack((x.ravel(), y.ravel(), z.ravel()))
+    cell = np.array([0.034, 0.1, 0.04])
+    f = F.simulate(co, cell, 0.0, "cake", 3, max_foot=(0.17, 0.115))
+    assert f["target"][:, 2].max() <= 0.08 * 1.2           # two layers at most, like the object
+    assert np.abs(f["target"][:, 1]).max() <= 0.135                 # every piece rests on the 27 cm deep board

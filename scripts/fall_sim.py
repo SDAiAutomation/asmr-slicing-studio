@@ -59,16 +59,17 @@ def simulate(co, cell, ground_z, material, seed, max_foot=None, release=None, fa
     # the settled pile is a dome wider than the object; every piece gets its own slot in it,
     # so nothing can overlap or sink through the board
     foot = ext * (1.0 + 0.8 * P["spread"])
-    limit_foot = None if max_foot is None else np.maximum(np.asarray(max_foot, float) - cell[:2] * 0.7, cell[:2])
+    limit_foot = None if max_foot is None else np.maximum(np.asarray(max_foot, float) - cell[:2] * 0.5, cell[:2] * 0.5)
     if limit_foot is not None:      # the whole pile stays on the board
         foot = np.minimum(foot, limit_foot)
-    step = max(cell[0], cell[1]) * 1.02
+    step = cell[:2] * 1.02      # one column per piece footprint, axis by axis
     dz_cell = cell[2] * PACK
     limit = max(dz_cell, 0.72 * (h + cell[2]))       # a settled pile is lower than the object
     while True:
         nx, ny = (np.ceil(foot / step).astype(int) + 1)
-        gx, gy = np.meshgrid(np.arange(-nx, nx + 1) * step, np.arange(-ny, ny + 1) * step, indexing="ij")
-        keep = (gx / foot[0]) ** 2 + (gy / foot[1]) ** 2 <= 1.0
+        gx, gy = np.meshgrid(np.arange(-nx, nx + 1) * step[0], np.arange(-ny, ny + 1) * step[1], indexing="ij")
+        # a column is usable while its centre lies within half a piece of the footprint
+        keep = (gx / (foot[0] + step[0] * 0.5)) ** 2 + (gy / (foot[1] + step[1] * 0.5)) ** 2 <= 1.0
         if keep.sum() < 1:
             keep[nx, ny] = True
         gx, gy = gx[keep], gy[keep]
@@ -106,7 +107,7 @@ def simulate(co, cell, ground_z, material, seed, max_foot=None, release=None, fa
         q = arrange(chunk_s, lvl[chunk_s] + 1e-3 * np.arange(len(chunk_s)), azim_s[chunk_s])
         assigned_col[p] = col[q]
         assigned_lvl[p] = lvl[q]
-    jit = (rng.random((n, 2)) - 0.5) * step * 0.32
+    jit = (rng.random((n, 2)) - 0.5) * step[None, :] * 0.32
     xy = centre + np.column_stack((gx[assigned_col], gy[assigned_col])) + jit
     tz = ground_z + (assigned_lvl + 0.5) * dz_cell
     target = np.column_stack((xy, tz))
