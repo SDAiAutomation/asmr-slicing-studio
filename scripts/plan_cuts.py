@@ -20,6 +20,7 @@ import time
 import numpy as np
 from scipy import ndimage
 
+import knife_traj as KT
 from common import OBJECTS, MATERIALS, direction_vector, load_config
 
 MIN_VOX = 6          # smallest voxel count we allow a piece to have
@@ -231,18 +232,26 @@ def plan(cfg):
                 stroke_frames = int(min(fps * 2.4, max(fps * 0.9, fps * (0.5 + 0.2 * math.log2(k)))))
                 spacing, traverse = 0, 2
             else:
-                spacing = max(min_space, int(round(fps * max(0.07, s0 * k ** -0.45))))
-                traverse = max(2, int(round(spacing * 0.6)))
+                # one real blade pass per cut: leave the knife time to get there and back
+                spacing = max(int(round(0.5 * fps)), int(round(fps * max(0.07, s0 * k ** -0.45))))
+                traverse = max(2, min(3, int(round(spacing * 0.25))))
             frame += pre
             stroke_start = frame
             stroke = {"index": stroke_no, "direction": dname, "normal": n_dir.tolist(),
                       "start_frame": frame, "milestone": milestone, "hits": []}
             e_now = explode_factor(len(alive) + k, mat["separation"])
+            prev_at = None
             for i_hit, p in enumerate(chosen):
                 if len(alive) >= stroke_target:
                     break
                 if dense:
                     frame = stroke_start + (min(i_hit, k - 1) * stroke_frames) // k
+                else:   # the knife needs time to fly to a piece further along the board
+                    here = p.centroid + p.offset_at(frame)
+                    if prev_at is not None:
+                        hop = float(np.linalg.norm(here - prev_at))   # arcs around the pile cost extra
+                        frame += max(int(math.ceil(2.2 * hop / KT.VMAX)), 6 if hop > 0.045 else 0)
+                    prev_at = here
                 n, fb = choose_plane(p, grid, n_dir)
                 if n is None:
                     continue
@@ -327,6 +336,8 @@ def plan(cfg):
             "cut_frame": p.cut_frame, "children": p.children,
             "hide_frame": getattr(p, "hide_frame", None), "keys": p.keys})
 
+    blade = plan_blade_passes(cfg, grid, shape, hits, {p.id: p for p in all_pieces}, int(total), fps, camera,
+                              {st["index"]: st["dense"] for st in strokes})
     final_alive = [p for p in all_pieces if p.cut_frame is None and p.level == len(levels) - 1]
     return {
         "version": 2,
@@ -342,6 +353,7 @@ def plan(cfg):
         "counter": counter,
         "camera": camera,
         "levels": level_info,
+        **blade,
         "stats": {
             "blade_strokes": len(strokes),
             "cut_planes": len(hits),
@@ -351,6 +363,55 @@ def plan(cfg):
             "plan_seconds": round(time.time() - t0, 3),
         },
     }
+
+
+def plan_blade_passes(cfg, grid, shape, hits, pieces, total, fps, camera, dense_stroke):
+    """Blade motion from the shared system: a pass per cut while there is time for the blade to
+    fly between pieces at a believable speed, otherwise the cut joins the current pass."""
+    lo, hi = shape.bbox()
+    ext = hi - lo
+    knife_scale = float(min(1.3, max(0.85, float(np.hypot(ext[0], ext[1])) * 1.05 / (KT.EDGE_X[-1] - KT.EDGE_X[0]))))
+    resistance = KT.RESISTANCE.get(cfg["object_type"], 0.5)
+    centre = np.array([0.0, 0.0, float(ext[2]) / 2])
+    radius = max([c["radius"] for c in camera] + [float(np.linalg.norm(ext)) / 2])
+    safe_r = radius * 1.1 + 0.03
+    vol = KT.VoxelVolume(grid.lo, grid.h, grid.dims)
+    strokes, covered, lonely = [], 0, 0
+    prev = None
+    for h in hits:
+        c, x = int(h["contact_frame"]), int(h["exit_frame"])
+        joined = False
+        if prev is not None and c - 3 < prev["time"]["retract_end"]:
+            joined = True      # the blade is still busy: this cut belongs to the current pass
+        st = None
+        if not joined:
+            piece = pieces[h["piece"]]
+            vol.set(piece.idx)
+            pts = grid.pts(piece.idx)
+            r = float(np.linalg.norm(pts - piece.centroid, axis=1).max()) * 1.25 + 0.01
+            pose = KT.Pose(0.0, h["offset"], 0.0)
+            st = KT.plan_stroke(vol, pose, h["plane_point"], h["plane_normal"], r, knife_scale, 0.0)
+            if st is not None and prev is not None:
+                p0, q0 = KT.ready_pose(prev)
+                p1, q1 = KT.ready_pose(st)
+                fly = KT.transit_frames(p0, q0, p1, q1, centre, safe_r)
+                if c - 3 - prev["time"]["retract_end"] < fly:
+                    st, joined = None, True
+        if st is None:
+            if prev is not None and joined:
+                prev["group_cuts"] += 1
+                lonely += int(not dense_stroke[h["stroke"]])
+            continue
+        earliest = prev["time"]["retract_end"] if prev else 1
+        st["time"] = KT.anchored_timing(c, x, earliest, KT.retract_frames(st), resistance, approach=3)
+        st.update(level=int(h["level"]), axis=-1, group_cuts=1, resistance=resistance, hit=h["piece"])
+        strokes.append(st)
+        prev = st
+        covered += 1
+    track = KT.build_track(strokes, total, centre, safe_r)
+    return {"blade_strokes": strokes, "knife_scale": knife_scale, "knife_track": track,
+            "blade_coverage": round(covered / max(1, len(hits)), 3),
+            "sparse_cuts_without_pass": lonely}
 
 
 def _level_substeps(target):

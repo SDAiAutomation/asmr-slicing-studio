@@ -629,14 +629,7 @@ def build_grid_scene(plan, out_dir):
     cuts_ev = [(c[0], c[1], lvl_cuts.get(c[2])) for c in plan["counters"]["cuts"]]
     pieces_ev = [(c[0], c[1]) for c in plan["counters"]["pieces"]]
     height = float(hi[2] - lo[2])
-    knife.scale = (plan["knife_scale"],) * 3
-    B.interp("LINEAR")
-    for i, row in enumerate(plan.get("knife_track", [])):
-        f = i + 1
-        knife.location = row[:3]
-        knife.rotation_quaternion = row[3:]
-        knife.keyframe_insert("location", frame=f)
-        knife.keyframe_insert("rotation_quaternion", frame=f)
+    B.key_knife_track(knife, plan)
     if levitate:
         for i, off in enumerate(plan.get("object_reaction", [])):
             pivot.location = centre + Vector(off)

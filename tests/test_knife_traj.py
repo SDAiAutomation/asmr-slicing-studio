@@ -170,3 +170,38 @@ def test_reaction_is_small(p):
     a = np.array(p["object_reaction"])
     assert len(a) == p["total_frames"]
     assert 0 < np.linalg.norm(a, axis=1).max() <= 0.0031
+
+
+# ---- shared blade system on the slices format --------------------------------------------
+@pytest.fixture(scope="module")
+def slices():
+    import plan_cuts
+    return plan_cuts.plan(load_config(dict(object_type="mango", target_piece_count=32, progression_sequence=[2, 4, 8, 16, 32],
+                                           cutting_mode="cumulative", random_seed=1, fps=24)))
+
+
+def test_slices_uses_the_shared_track(slices):
+    tr = np.array(slices["knife_track"])
+    assert len(tr) == slices["total_frames"] and slices["blade_strokes"]
+    assert np.linalg.norm(np.diff(tr[:, :3], axis=0), axis=1).max() < 0.08
+
+
+def test_slices_blade_crosses_each_passed_cut_plane(slices):
+    tr = np.array(slices["knife_track"])
+    for st in slices["blade_strokes"]:
+        t = st["time"]
+        m = KT.quat_to_mat(np.array(st["q"]))
+        for f in range(t["contact"], t["exit"] + 1):
+            p = tr[f - 1, :3]
+            assert abs((p - np.array(st["anchor"])) @ np.array(st["n"])) < 1e-3
+        assert t["ready"] < t["contact"] < t["exit"] < t["sep_end"] < t["retract_end"]
+
+
+def test_slices_every_cut_is_covered_by_a_pass(slices):
+    assert slices["sparse_cuts_without_pass"] == 0   # a cut never happens without its blade
+    assert sum(s["group_cuts"] for s in slices["blade_strokes"]) == len(slices["hits"])
+
+
+def test_slices_keeps_real_piece_progression(slices):
+    assert [s["count_after"] for s in slices["strokes"]] == sorted(s["count_after"] for s in slices["strokes"])
+    assert slices["strokes"][-1]["count_after"] == 32

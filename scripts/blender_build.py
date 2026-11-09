@@ -349,24 +349,6 @@ def key_location(obj, keys):
         obj.keyframe_insert("location", frame=f)
 
 
-def blade_quat(n, d):
-    n, d = Vector(n).normalized(), Vector(d).normalized()
-    Y = -d
-    Z = n
-    X = Y.cross(Z).normalized()
-    if X.x < 0:  # keep the handle on the right of the frame
-        Z = -Z
-        X = Y.cross(Z).normalized()
-    m = Matrix((X, Y, Z)).transposed()
-    return m.to_quaternion()
-
-
-# ---------------------------------------------------------------------------
-# scene
-# ---------------------------------------------------------------------------
-ASSETS = os.path.join(HERE, "..", "assets", "cache")
-
-
 def _asset(name):
     p = os.path.join(ASSETS, name)
     return p if os.path.exists(p) else None
@@ -663,7 +645,7 @@ def build_scene(plan, out_dir):
         "objects": len(obj_of),
     })
 
-    animate_knife(knife, plan, pieces, keys_of)
+    key_knife_track(knife, plan)
     cam = build_camera(plan, cfg)
     cuts_events, done = [], {}
     per_level = {}
@@ -753,58 +735,15 @@ def build_knife():
     return blade
 
 
-def animate_knife(knife, plan, pieces, keys_of):
-    fps = plan["fps"]
-    park = Vector((0.35, -0.10, 0.25))
-    interp("BEZIER")
-    knife.location = park
-    knife.rotation_quaternion = blade_quat((0, 1, 0), (0, 0, -1))
-    knife.keyframe_insert("location", frame=1)
-    knife.keyframe_insert("rotation_quaternion", frame=1)
-    prev_q = knife.rotation_quaternion.copy()
-    last = 1
-    hits = plan["hits"]
-
-    def key(f, loc, q):
-        knife.location = loc
-        knife.rotation_quaternion = q
-        knife.keyframe_insert("location", frame=f)
-        knife.keyframe_insert("rotation_quaternion", frame=f)
-
-    for i, h in enumerate(hits):
-        c0, c1 = h["contact_frame"], h["exit_frame"]
-        if c0 <= last:  # dense wave: several pieces in this frame, knife follows the first
-            continue
-        n, d = Vector(h["plane_normal"]), Vector(h["travel"])
-        q = blade_quat(n, d)
-        if q.dot(prev_q) < 0:
-            q.negate()
-        c = Vector(h["plane_point"]) + Vector(h["offset"])
-        ext = h["extent_travel"]
-        shift = -q.to_matrix().col[0] * 0.02
-        start = c - d * (ext + 0.004) + shift
-        end = c + d * (ext + 0.004) + shift
-        if d.z < -0.2:  # coming down: stop on the board surface (z = 0)
-            end = c + d * ((c.z - 0.0004) / -d.z) + shift
-        gap = c0 - last
-        if gap >= 4:
-            lead = min(6, gap - 2)
-            key(c0 - lead, start - d * 0.03, q)
-            key(c0, start, q)
-            key(c1, end, q)
-            last = c1
-        else:  # fast chopping: one key per frame, blade through the piece
-            key(c0, end, q)
-            last = c0
-        prev_q = q
-        nxt = hits[i + 1]["contact_frame"] if i + 1 < len(hits) else None
-        if (nxt is None or nxt - last > 8) and last == c1:
-            key(c1 + 4, end - d * 0.05, q)
-            last = c1 + 4
-    end_f = plan["total_frames"]
-    knife.location = park
-    knife.keyframe_insert("location", frame=max(last + 10, end_f - 20))
-    knife.keyframe_insert("rotation_quaternion", frame=max(last + 10, end_f - 20))
+def key_knife_track(knife, plan):
+    """Keys the per-frame blade track computed by knife_traj (same for every format)."""
+    knife.scale = (plan["knife_scale"],) * 3
+    interp("LINEAR")
+    for i, row in enumerate(plan.get("knife_track", [])):
+        knife.location = row[:3]
+        knife.rotation_quaternion = row[3:]
+        knife.keyframe_insert("location", frame=i + 1)
+        knife.keyframe_insert("rotation_quaternion", frame=i + 1)
 
 
 def build_camera(plan, cfg):

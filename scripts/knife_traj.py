@@ -1,7 +1,10 @@
 """Blade trajectories driven by the object's real geometry (no Blender needed).
 
 Every visible blade stroke follows approach -> contact -> penetration -> traversal ->
-separation -> retract, sampled per frame. The stroke is computed from the actual
+separation -> retract, sampled per frame. This module is the one blade-motion system of the
+project: planners (grid, levitate, slices) call plan_stroke() on anything exposing
+inside(x, y, z), give each stroke a "time" dict (timing() or anchored_timing()) and
+hand the list to build_track(); Blender only keys the resulting per-frame track. The stroke is computed from the actual
 intersection of the cut plane with the shape, so "contact" is the frame where the curved
 cutting edge really enters the object and "exit" the frame where it has left it.
 Retraction goes back up its own kerf; moves between strokes arc around the object.
@@ -146,6 +149,29 @@ def section_extent(shape, pose, point, n, d, radius, res=220):
     return float(us.min()), float(us.max())
 
 
+class VoxelVolume:
+    """Shape-like view of one voxel piece, so a real cut piece can be fed to plan_stroke."""
+
+    def __init__(self, lo, h, dims):
+        self.lo, self.h, self.dims = np.asarray(lo, float), float(h), np.asarray(dims)
+        self.mask = np.zeros(int(np.prod(dims)), bool)
+        self.active = None
+
+    def set(self, flat_idx):
+        if self.active is not None:
+            self.mask[self.active] = False
+        self.mask[flat_idx] = True
+        self.active = flat_idx
+
+    def inside(self, x, y, z):
+        ijk = np.floor((np.stack((x, y, z), -1) - self.lo) / self.h).astype(np.int64)
+        ok = ((ijk >= 0) & (ijk < self.dims)).all(-1)
+        out = np.zeros(ok.shape, bool)
+        flat = np.ravel_multi_index(tuple(np.moveaxis(ijk[ok], -1, 0)), tuple(self.dims))
+        out[ok] = self.mask[flat]
+        return out
+
+
 def plan_stroke(shape, pose, p_obj, n_obj, radius, scale, floor_z=0.0):
     """Geometry of one blade pass through the plane (object-space point and normal).
     Returns the blade frame, the anchor line and the s-coordinates of contact/exit."""
@@ -223,6 +249,19 @@ def timing(a, b, resistance, retract):
     pen = max(1, round((x - c) * 0.3 * slow))
     return {"ready": a, "contact": c, "pen_end": c + min(pen, x - c - 1), "exit": x,
             "sep_end": sep_end, "retract_end": r, "slot": [a, b]}
+
+
+def anchored_timing(contact, exit_f, earliest, retract, resistance, approach=4):
+    """Timing of a stroke whose contact and exit frames are imposed by the planner."""
+    ready = max(earliest, contact - approach)
+    if ready >= contact:
+        ready = contact - 1
+    exit_f = max(exit_f, contact + 2)
+    pen = max(1, round((exit_f - contact) * 0.3 * (0.7 + resistance)))
+    sep_end = exit_f + 1
+    return {"ready": ready, "contact": contact, "pen_end": contact + min(pen, exit_f - contact - 1),
+            "exit": exit_f, "sep_end": sep_end, "retract_end": sep_end + max(1, retract),
+            "slot": [ready, sep_end + max(1, retract) + 1]}
 
 
 def _hermite(t, t0, t1, s0, s1, v0, v1):
