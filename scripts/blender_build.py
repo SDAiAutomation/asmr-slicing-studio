@@ -491,7 +491,7 @@ def setup_environment(scn, board_size=(0.46, 0.34), brand=""):
     board = cutting_board(board_size)
     if brand:
         board_brand(brand, board_size)
-    bpy.ops.mesh.primitive_plane_add(size=6, location=(0, 0, -0.0221))
+    bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, -0.0221))
     floor = bpy.context.object
     floor.name = "Table"
     floor.data.materials.append(simple_mat("Table", (0.016, 0.015, 0.019), 0.7))
@@ -992,7 +992,7 @@ def main():
                      "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
                      "04_final": lv[-1]["collapse_end"] + 4}
             if plan["config"]["format"] == "levitate":
-                shots["06_falling"] = (mid["collapse_start"] + mid["collapse_end"]) // 2
+                shots["06_falling"] = mid["collapse_start"] + (mid["collapse_end"] - mid["collapse_start"]) // 3
             # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
             sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
         else:
