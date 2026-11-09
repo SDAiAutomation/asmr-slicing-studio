@@ -793,9 +793,14 @@ def animate_knife(knife, plan, pieces, keys_of):
             key(c0, start, q)
             key(c1, end, q)
             last = c1
-        else:  # fast chopping: one key per frame, blade through the piece
-            key(c0, end, q)
-            last = c0
+        else:  # short window: preserve a visible entry and traversal
+            # The old path placed the blade at the exit on the contact frame,
+            # making the cut appear instantaneous. Use the available interval.
+            entry_frame = max(last + 1, c0)
+            exit_frame = max(entry_frame + 1, c1)
+            key(entry_frame, start, q)
+            key(exit_frame, end, q)
+            last = exit_frame
         prev_q = q
         nxt = hits[i + 1]["contact_frame"] if i + 1 < len(hits) else None
         if (nxt is None or nxt - last > 8) and last == c1:
