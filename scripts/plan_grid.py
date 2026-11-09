@@ -177,6 +177,10 @@ def _plan(cfg, ts=1.0):
                 cut_group[int(j)] = gi
             cursor = end
         blade_strokes.extend(lvl_blades)
+        # Explicitly expose when one visible blade pass represents several cuts.
+        # This is essential for honest counters and downstream audiovisual QA.
+        grouped_cut_count = sum(len(g) for g, _ in planned if len(g) > 1)
+        max_cuts_per_pass = max((len(g) for g, _ in planned), default=0)
         active = [0, 0, 0]
         z_done = 0
         last_eval_frame = None
@@ -213,7 +217,11 @@ def _plan(cfg, ts=1.0):
                "strokes_start": f, "strokes_end": f + dur, "collapse_start": f_end,
                "collapse_end": f_end + collapse, "exit_start": f_end + collapse + hold,
                "end_frame": f_end + collapse + hold + exit_f,
-               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(), "yaw": yaw}
+               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(), "yaw": yaw,
+               "visible_blade_passes": len(lvl_blades),
+               "grouped_cut_count": grouped_cut_count,
+               "max_cuts_per_pass": max_cuts_per_pass,
+               "cut_visualization": "grouped" if grouped_cut_count else "individual"}
         pieces_ev.append((f_end, cubes, li))
         levels.append(lvl)
         strokes.extend(lvl_strokes)
@@ -231,7 +239,9 @@ def _plan(cfg, ts=1.0):
         "knife_track": KT.build_track(blade_strokes, int(total), centre, safe_r),
         "object_reaction": KT.reaction_track(blade_strokes, int(total), resistance),
         "counters": {"cuts": cuts_ev, "pieces": pieces_ev},
-        "stats": {"levels": len(levels), "blade_strokes": len(strokes),
+        "stats": {"levels": len(levels), "blade_strokes": len(blade_strokes),
+                  "planned_cuts": len(strokes),
+                  "grouped_levels": sum(l["cut_visualization"] == "grouped" for l in levels),
                   "final_cubes": levels[-1]["cubes"] if levels else 0,
                   "plan_seconds": round(time.time() - t0, 2)},
     }
