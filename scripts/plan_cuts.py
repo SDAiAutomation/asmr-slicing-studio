@@ -290,6 +290,12 @@ def plan(cfg):
             if dense:
                 frame = stroke_start + stroke_frames
             stroke["dense"] = dense
+            # A stroke can cut multiple existing pieces. Expose the visual compression
+            # instead of suggesting that every hit has its own knife animation.
+            stroke["cut_planes"] = len(stroke["hits"])
+            stroke["visual_blade_passes"] = 1 if stroke["hits"] else 0
+            stroke["grouped_hits"] = max(0, len(stroke["hits"]) - 1)
+            stroke["visualization"] = "grouped" if len(stroke["hits"]) > 1 else "individual"
             frame += traverse + post
             # settle every piece of this level to the new explode factor
             e_after = explode_factor(len(alive), mat["separation"])
@@ -345,6 +351,8 @@ def plan(cfg):
         "stats": {
             "blade_strokes": len(strokes),
             "cut_planes": len(hits),
+            "grouped_cut_planes": sum(st["grouped_hits"] for st in strokes),
+            "max_planes_per_stroke": max((st["cut_planes"] for st in strokes), default=0),
             "expected_final_pieces": len(final_alive),
             "target": cfg["target_piece_count"],
             "fallback_axis_cuts": fallbacks,
