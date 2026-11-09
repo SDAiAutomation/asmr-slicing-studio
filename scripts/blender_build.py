@@ -879,6 +879,7 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
     and the bottom ~25 % (username, caption) are covered by the app UI on a phone.
     y is in units of the frame half-height: +1 = top edge, -1 = bottom edge."""
     white = simple_mat("Overlay", (1, 1, 1), 1.0, 0.0, emit=(1, 1, 1))
+    ink = simple_mat("OverlayInk", (0.018, 0.010, 0.005), 1.0, 0.0, emit=(0.018, 0.010, 0.005))
     accent = simple_mat("OverlayAccent", (1, 0.75, 0.3), 1.0, 0.0, emit=(1, 0.72, 0.25))
     D = 0.1
     hh = D * math.tan(math.atan(18 / 50))
@@ -886,7 +887,7 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
     if cfg["show_counter"]:
         _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.60, D, white)
         text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
-        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, white)
+        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, ink)  # dark ink: this counter sits on the light board
         text_obj("PiecesWord", cfg["label_pieces"], hh * 0.05, (0, -hh * 0.48, -D), cam, accent)
     if cfg.get("hook_text"):
         ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.31, -D), cam, white)
