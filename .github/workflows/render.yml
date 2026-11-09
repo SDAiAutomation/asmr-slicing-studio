@@ -157,8 +157,7 @@ jobs:
             [ -f "$f" ] && rclone copyto "$f" "${REMOTE}_logs/run${GITHUB_RUN_NUMBER}_$(basename "$f")" --drive-root-folder-id "$DRIVE_FOLDER_ID"
           done; true
 
-      - name: Log preview montage (preview-only runs, reviewable from the job log)
-        if: inputs.preview_only == 'yes'
+      - name: Log preview montage (reviewable from the job log)
         run: |
           cd work/previews
           ffmpeg -v error -y -pattern_type glob -i '0[12346]_*.png' -vf "scale=300:534,tile=6x1" -frames:v 1 -q:v 5 montage.jpg

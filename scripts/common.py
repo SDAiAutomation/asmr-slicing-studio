@@ -280,8 +280,8 @@ MATERIALS = {
     },
     "cake": {
         "label": "CAKE",
-        "skin_base": (0.85, 0.55, 0.65), "skin_stem": (0.85, 0.55, 0.65),
-        "skin_blush": (0.85, 0.55, 0.65), "skin_roughness": 0.5,
+        "skin_base": (0.040, 0.014, 0.007), "skin_stem": (0.040, 0.014, 0.007),
+        "skin_blush": (0.040, 0.014, 0.007), "skin_roughness": 0.5,
         "flesh": (0.80, 0.55, 0.25), "flesh_deep": (0.70, 0.45, 0.18),
         "flesh_roughness": 0.7, "flesh_subsurface": 0.05, "fibrous": False,
         "rim": (0.85, 0.55, 0.65), "rim_width": 0.0,

@@ -214,6 +214,33 @@ def frosting_mat(M):
     mat, nt, bsdf = B.principled("Frosting")
     bsdf.inputs["Base Color"].default_value = (*M["skin_base"], 1)
     tc = nt.nodes.new("ShaderNodeTexCoord")
+    # piped cream border on the top: scalloped ring from radius + angle, only above the sides
+    L = nt.links
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    L.new(tc.outputs["Object"], sep.inputs[0])
+
+    def mth(op, a, b=None):
+        n = nt.nodes.new("ShaderNodeMath")
+        n.operation = op
+        for i, x in enumerate((a, b)):
+            if isinstance(x, (int, float)):
+                n.inputs[i].default_value = x
+            elif x is not None:
+                L.new(x, n.inputs[i])
+        return n.outputs[0]
+
+    r = mth("SQRT", mth("ADD", mth("MULTIPLY", sep.outputs["X"], sep.outputs["X"]),
+                        mth("MULTIPLY", sep.outputs["Y"], sep.outputs["Y"])))
+    ang = mth("ARCTAN2", sep.outputs["Y"], sep.outputs["X"])
+    wav = mth("MULTIPLY", mth("SINE", mth("MULTIPLY", ang, 26.0)), 0.0055)
+    dist = mth("ABSOLUTE", mth("SUBTRACT", mth("ADD", r, wav), OBJECTS["cake"].ax * 0.82))
+    ring = mth("LESS_THAN", dist, 0.0085)
+    top = mth("GREATER_THAN", sep.outputs["Z"], OBJECTS["cake"].h * 0.9)
+    m, f, a, b, o = B.mix_rgb(nt)
+    L.new(mth("MULTIPLY", ring, top), f)
+    a.default_value = (*M["skin_base"], 1)
+    b.default_value = (0.90, 0.80, 0.62, 1)
+    L.new(o, bsdf.inputs["Base Color"])
     nz = nt.nodes.new("ShaderNodeTexNoise")
     B.set_input(nz, "Scale", 55.0)
     B.set_input(nz, "Detail", 3.0)
