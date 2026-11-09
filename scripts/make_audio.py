@@ -181,7 +181,7 @@ AUDIO_PRESETS = {
     "musical_asmr": {"cutting_asmr": 1.0, "piece_impacts": 0.95, "musical_notes": 0.42, "ambient_layer": 0.5, "reward_fx": 0.45},
     "rhythmic_satisfying": {"cutting_asmr": 0.85, "piece_impacts": 0.95, "musical_notes": 0.95, "ambient_layer": 0.9, "reward_fx": 0.8},
 }
-LOUDNESS_TARGET = -16.0     # LUFS, the usual level for short-form social video
+LOUDNESS_TARGET = -15.0     # LUFS, the usual level for short-form social video
 
 # Musical layer: everything is placed on the plan's own frames, so it stays locked to the blade.
 PROGRESSION = [(0, 3, 7, 10), (-4, 0, 3, 7), (3, 7, 10, 14), (-2, 2, 5, 9)]  # Am7 Fmaj7 Cmaj7 G7 (semitones)
@@ -296,6 +296,10 @@ def grid_events(plan, B, P, rng, samples, events, t_of):
         events.append({"t": t_of(x), "type": "end_of_cut", "frame": x, "strokes": nh})
     for lvl in plan["levels"]:
         t0, t1 = t_of(lvl["collapse_start"]), t_of(lvl["collapse_end"])
+        for r in lvl.get("releases", []):   # each detached slice has its own small landing
+            land = tone(rng, P["land"]["f0"] * rng.uniform(1.15, 1.5), P["land"]["decay"])
+            place(B["piece_impacts"], t_of(r) + rng.uniform(0.22, 0.34), land, float(rng.uniform(-0.3, 0.3)),
+                  P["land"]["gain"] * 0.8)
         n = int(SR * (t1 - t0 + 0.4))
         dens = 60 + 90 * np.log10(max(10, lvl["cubes"]))      # grains per second
         y = np.zeros(n)
@@ -437,8 +441,9 @@ def render(plan, out_dir):
         bus_stats[name] = {"gain": gains[name], "peak": round(float(np.abs(y).max()), 4)}
         mix += y
     ceiling = 10 ** (-1.0 / 20)
-    mix *= 10 ** ((LOUDNESS_TARGET - loudness_lufs(mix)) / 20)   # loudness first, then transients
-    mix = limit(mix, ceiling)
+    for _ in range(4):           # the limiter lowers loudness a little: converge on the target
+        mix *= 10 ** ((LOUDNESS_TARGET - loudness_lufs(mix)) / 20)
+        mix = limit(mix, ceiling)
     pcm = np.clip(mix, -1, 1)
     clipped = int(np.count_nonzero(np.abs(pcm) >= 0.9999))
 

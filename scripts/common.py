@@ -25,6 +25,7 @@ DEFAULTS = {
     "music": False,                    # legacy flag; the sound is chosen with audio_preset
     "audio_preset": "asmr_pure",       # "asmr_pure" | "musical_asmr" | "rhythmic_satisfying"
     "audio_bus_gains": None,           # {bus: gain} overrides, see make_audio.AUDIO_PRESETS
+    "progressive_release": False,      # levitate: each last-axis cut drops its slice; passes = cuts up to 40
     "knife_slot_start": 0.55,          # grid: seconds per visible blade pass on the first level
     "knife_slot_end": 0.30,            # ... and on the last level (dense levels group cuts)
     "knife_emphasis": 1.5,             # slow-down factor of the key passes (first and very last)

@@ -760,7 +760,7 @@ def build_grid_scene(plan, out_dir):
             B.interp("CONSTANT")
             pivot.rotation_euler = (0.0, 0.0, lvl["yaw"])
             pivot.keyframe_insert("rotation_euler", frame=start)
-        B.set_visibility(ob, start, lvl["collapse_start"])
+        B.set_visibility(ob, start, lvl.get("release_start", lvl["collapse_start"]))
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
         ob.keyframe_insert("location", frame=start)
@@ -785,13 +785,20 @@ def build_grid_scene(plan, out_dir):
         shown = int(len(co))
         floor_z = -lift if levitate else 0.0
         # the pile turns with the object's yaw: keep it inside the board whatever the angle
+        f0, release, frac = lvl["collapse_start"], None, 1.0
+        if lvl.get("releases"):     # slices leave one by one behind the blade
+            f0 = lvl["release_start"]
+            total = max(1, lvl["collapse_end"] - f0)
+            release = (np.array(lvl["releases"])[cell_index(np.asarray(co, np.float64), lvl)[:, 0]] - f0) / total
+            frac = (lvl["collapse_end"] - lvl["collapse_start"]) / total
         fall = fall_sim.simulate(co, cell, floor_z, cfg["material_profile"], cfg["random_seed"] + li,
-                                 max_foot=(B.BOARD_SIZE[0] / 2 - 0.03, B.BOARD_SIZE[1] / 2 - 0.02))
+                                 max_foot=(B.BOARD_SIZE[0] / 2 - 0.03, B.BOARD_SIZE[1] / 2 - 0.02),
+                                 release=release, fall_frac=frac)
         real = shown <= REAL_PIECES_MAX
         if real:
             cob, mod = None, None
             cob, made = real_pile(f"Pile_{li:02d}", me, lvl, co, kinds, fall, pmat, fall_sim.fall_curve(FP["bounce"]),
-                                  cfg["random_seed"] + li, lvl["collapse_start"], lvl["end_frame"])
+                                  cfg["random_seed"] + li, f0, lvl["end_frame"])
             if made != built:
                 report["failures"].append({"level": li, "real_pieces": made, "planned": built})
         else:
@@ -803,12 +810,12 @@ def build_grid_scene(plan, out_dir):
         rest_z = lift if levitate else 0.0   # the pile stays at flight height, each piece falls on its own
         cob.rotation_euler = (0.0, 0.0, lvl["yaw"]) if levitate else (0.0, 0.0, 0.0)
         if not real:
-            B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
+            B.set_visibility(cob, f0, lvl["end_frame"])
             cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
             path = f'modifiers["GN"]["{ids["Collapse"]}"]'
             B.interp("LINEAR")   # the fall curve lives in the node group: no double easing
             mod[ids["Collapse"]] = 0.0
-            cob.keyframe_insert(data_path=path, frame=lvl["collapse_start"])
+            cob.keyframe_insert(data_path=path, frame=f0)
             mod[ids["Collapse"]] = 1.0
             cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
         B.interp("BEZIER")

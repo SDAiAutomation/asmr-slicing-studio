@@ -40,8 +40,10 @@ def fall_curve(bounce):
             (0.76, 1.0 - bounce), (0.86, 1.0), (0.93, 1.0 - bounce * 0.25), (1.0, 1.0)]
 
 
-def simulate(co, cell, ground_z, material, seed, max_foot=None):
-    """co: Nx3 local centres, cell: piece size. Returns target (Nx3), delay, span, spin (N)."""
+def simulate(co, cell, ground_z, material, seed, max_foot=None, release=None, fall_frac=1.0):
+    """co: Nx3 local centres, cell: piece size. Returns target (Nx3), delay, span, spin (N).
+    release: optional per-piece start in the window (0..1): what is released first lands lowest;
+    fall_frac: share of the window one fall lasts when pieces are released progressively."""
     P = params(material)
     rng = np.random.default_rng(seed)
     co = np.asarray(co, np.float64)
@@ -99,7 +101,8 @@ def simulate(co, cell, ground_z, material, seed, max_foot=None):
         def arrange(idx, height, azim):
             band = np.floor(np.argsort(np.argsort(height)) * 6 / max(1, len(idx)))
             return idx[np.lexsort((azim, band))]
-        p = arrange(chunk_p, co[chunk_p, 2], azim_p[chunk_p])
+        early_low = co[chunk_p, 2] if release is None else release[chunk_p] + 1e-3 * rel[chunk_p]
+        p = arrange(chunk_p, early_low, azim_p[chunk_p])
         q = arrange(chunk_s, lvl[chunk_s] + 1e-3 * np.arange(len(chunk_s)), azim_s[chunk_s])
         assigned_col[p] = col[q]
         assigned_lvl[p] = lvl[q]
@@ -112,6 +115,9 @@ def simulate(co, cell, ground_z, material, seed, max_foot=None):
     delay = 0.24 * (1.0 - dist / rmax) + 0.08 * (1.0 - rel) + 0.05 * rng.random(n)
     fall = np.sqrt(dz / max(float(dz.max()), 1e-6))      # free fall: time ~ sqrt(height)
     span = np.maximum(0.35, 0.8 * fall)
+    if release is not None:
+        delay = np.asarray(release, float) + delay * fall_frac
+        span = span * fall_frac
     land = delay + span * LAND_U
     # contact order: within a column a piece cannot land before the one under it
     order = np.lexsort((assigned_lvl, assigned_col))
@@ -121,7 +127,9 @@ def simulate(co, cell, ground_z, material, seed, max_foot=None):
     land[order] = ls
     span = np.maximum(span, (land - delay) / LAND_U)
     k = float((delay + span).max())
-    if k > 1.0:
+    if release is not None:      # a slice never leaves before its blade: shorten the fall instead
+        span = np.minimum(span, np.maximum(1.0 - delay, 0.01))
+    elif k > 1.0:
         delay, span = delay / k, span / k
     spin = P["spin"] * np.minimum(1.0, dz / max(1e-6, 4.0 * float(cell[2]))) * rng.uniform(0.4, 1.0, n)
     return {"target": target.astype(np.float32), "delay": delay.astype(np.float32),

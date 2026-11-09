@@ -40,6 +40,23 @@ def split_cuts(ext, C):
     return cuts
 
 
+def progressive_cuts(C):
+    """Most cuts go to the X sweep: those are the ones that visibly detach a slice."""
+    x = max(1, int(round(C * 0.6)))
+    rest = C - x
+    y = int(np.ceil(rest * 0.6))
+    return np.array([x, y, rest - y])
+
+
+def count_by_starts(occ, starts):
+    """Non-empty boxes when each axis is grouped from these cell indices."""
+    r = occ
+    for a, s in enumerate(starts):
+        if len(s) < occ.shape[a]:
+            r = np.logical_or.reduceat(r, sorted(s), axis=a)
+    return int(np.count_nonzero(r))
+
+
 _OCC = {}
 
 
@@ -90,7 +107,8 @@ def _plan(cfg, ts=1.0):
     frame = 1
     intro = int(0.4 * fps)   # first cut within half a second: the hook is the action itself
     for li, C in enumerate(cfg["cuts_sequence"]):
-        cuts = split_cuts(ext, C)
+        progressive = bool(cfg.get("progressive_release")) and levitate
+        cuts = progressive_cuts(C) if progressive else split_cuts(ext, C)
         n = cuts + 1
         if int(np.prod(n)) > 4 * cfg["max_cubes"]:
             break
@@ -106,6 +124,9 @@ def _plan(cfg, ts=1.0):
         order = [(0, k) for k in range(1, cuts[0] + 1)] + \
                 [(1, k) for k in range(1, cuts[1] + 1)] + \
                 [(2, k) for k in range(cuts[2], 0, -1)]
+        if progressive:     # prepare with horizontal and depth cuts, then the sweep that detaches
+            order = [(2, k) for k in range(cuts[2], 0, -1)] + [(1, k) for k in range(1, cuts[1] + 1)] + \
+                    [(0, k) for k in range(1, cuts[0] + 1)]
         # Visible blade passes: one per cut while it stays readable, then each pass stands for
         # a group of neighbouring cuts (they appear while the blade crosses the object).
         # adaptive pace: readable at first, accelerating towards a rhythmic finish
@@ -113,7 +134,7 @@ def _plan(cfg, ts=1.0):
         slot_s = cfg["knife_slot_start"] + (cfg["knife_slot_end"] - cfg["knife_slot_start"]) * prog
         min_slot = max(7, int(round(slot_s * fps * 0.9)))
         n_cuts = max(1, len(order))
-        readable = n_cuts <= 20   # every cut gets its own, unhurried blade pass
+        readable = n_cuts <= (40 if progressive else 20)   # every cut gets its own blade pass
         if readable:
             min_slot = max(min_slot, int(round(slot_s * fps)))
         visible = n_cuts if readable else min(n_cuts, max(1, dur // min_slot))
@@ -181,6 +202,7 @@ def _plan(cfg, ts=1.0):
         z_done = 0
         last_eval_frame = None
         lvl_strokes = []
+        starts = [{0}, {0}, {0}]
         for j, (ax, k) in enumerate(order):
             sf = cut_frames[j]
             pos = lo[ax] + ext[ax] * k / n[ax]
@@ -193,7 +215,10 @@ def _plan(cfg, ts=1.0):
                   "frame": int(sf), "n_in_level": j + 1, "group": cut_group[j]}
             lvl_strokes.append(st)
             cuts_ev.append((int(sf), j + 1, li))
-            if sf != last_eval_frame or j == len(order) - 1:
+            if progressive:
+                starts[ax].add(int(n[ax] - k) if ax == 2 else int(k))
+                pieces_ev.append((int(sf), count_by_starts(occ, starts), li))
+            elif sf != last_eval_frame or j == len(order) - 1:
                 if ax == 2:
                     # first z_done horizontal cuts from the top = last indices
                     zc = occ
@@ -217,6 +242,10 @@ def _plan(cfg, ts=1.0):
                "collapse_end": f_end + collapse, "exit_start": f_end + collapse + hold,
                "end_frame": f_end + collapse + hold + exit_f,
                "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(), "yaw": yaw}
+        if progressive:     # a slice leaves as soon as the blade has passed its plane
+            xf = [cut_frames[j] for j, (ax, _k) in enumerate(order) if ax == 0]
+            lvl["release_start"] = int(xf[0])
+            lvl["releases"] = [int(v) + 1 for v in xf] + [int(xf[-1]) + 2]
         pieces_ev.append((f_end, cubes, li))
         levels.append(lvl)
         strokes.extend(lvl_strokes)

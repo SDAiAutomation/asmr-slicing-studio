@@ -78,3 +78,12 @@ def test_pile_stays_inside_the_board_limit():
     f = F.simulate(co, cell, 0.0, "cake", 7, max_foot=(0.17, 0.115))
     assert np.abs(f["target"][:, 0]).max() < 0.17 + 0.01
     assert np.abs(f["target"][:, 1]).max() < 0.115 + 0.01
+
+
+def test_progressive_release_lands_in_release_order():
+    co, c = grid()
+    rel = (co[:, 0] - co[:, 0].min()) / np.ptp(co[:, 0]) * 0.7
+    f = F.simulate(co, c, -0.05, "cake", 9, release=rel, fall_frac=0.3)
+    assert (f["delay"] >= rel - 1e-6).all() and ((f["delay"] + f["span"]) <= 1.0 + 1e-5).all()
+    land = f["delay"] + f["span"] * F.LAND_U
+    assert np.corrcoef(rel, land)[0, 1] > 0.8

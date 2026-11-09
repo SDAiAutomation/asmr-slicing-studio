@@ -213,3 +213,27 @@ def test_knife_is_out_of_the_object_when_pieces_fall(p):
     for l in p["levels"]:
         for f in range(l["collapse_start"], l["collapse_end"]):
             assert np.linalg.norm(tr[f - 1, :3] - centre) > 0.2
+
+
+# ---- progressive release: real passes, one slice per sweep cut -----------------------------
+@pytest.fixture(scope="module")
+def prog():
+    return make(cuts_sequence=[3, 15, 30], progressive_release=True, video_duration=None)
+
+
+def test_every_announced_cut_is_a_real_pass(prog):
+    for l in prog["levels"]:
+        assert len([s for s in prog["blade_strokes"] if s["level"] == l["level"]]) == l["cuts"]
+
+
+def test_each_sweep_cut_releases_a_slice_in_order(prog):
+    for l in prog["levels"]:
+        r = l["releases"]
+        assert len(r) == l["cells_xyz"][0] and r == sorted(r) and r[0] == l["release_start"] + 1
+        assert r[-1] <= l["collapse_start"]
+
+
+def test_piece_counter_climbs_and_ends_exact(prog):
+    for l in prog["levels"]:
+        ev = [c for f, c, li in prog["counters"]["pieces"] if li == l["level"]]
+        assert ev == sorted(ev) and ev[-1] == l["cubes"] and len(set(ev)) > l["cuts"] / 2
