@@ -2,7 +2,10 @@
   "id": "qc-001-concrete-en",
   "series": "QUALITY CONTROL · TEST 001",
   "decimal": ".",
-  "hook": ["15 cm concrete cube", "How many tons?"],
+  "hook": [
+    "15 cm concrete cube",
+    "How many tons?"
+  ],
   "hook_sub": "Guess in the comments ↓",
   "replay_label": "SLOW-MO",
   "rounds": [
@@ -15,15 +18,27 @@
       "unit": "t",
       "decimals": 0,
       "gauge_max": 120,
-      "steps": [20, 50, 80],
+      "steps": [
+        20,
+        50,
+        80
+      ],
       "question_value": 100,
       "question": "100 t?",
       "question_sub": "YES or NO ↓",
       "break_value": 85,
-      "threshold": {"value": 85, "label": "C30/37 min"},
-      "stamp": {"text": "PASS", "color": "green"},
+      "threshold": {
+        "value": 85,
+        "label": "C30/37 min"
+      },
+      "stamp": {
+        "text": "PASS",
+        "color": "green"
+      },
       "result_chip": "85 t",
-      "fact": ["37 MPa × 15 × 15 cm = 85 t"]
+      "fact": [
+        "37 MPa × 15 × 15 cm = 85 t"
+      ]
     },
     {
       "title": "ROUND 2 · PULL",
@@ -34,26 +49,43 @@
       "unit": "t",
       "decimals": 1,
       "gauge_max": 12,
-      "steps": [2, 4, 6],
+      "steps": [
+        2,
+        4,
+        6
+      ],
       "question_value": 10,
       "question": "10 t?",
       "question_sub": "Same concrete. Same size.",
       "break_value": 6.6,
       "threshold": null,
-      "stamp": {"text": "13× WEAKER", "color": "red"},
+      "stamp": {
+        "text": "13× WEAKER",
+        "color": "red"
+      },
       "result_chip": "6.6 t",
-      "fact": ["2.9 MPa × 15 × 15 cm = 6.6 t"]
+      "fact": [
+        "2.9 MPa × 15 × 15 cm = 6.6 t"
+      ]
     }
   ],
   "explain": {
     "title": "WHY STEEL BARS?",
-    "lines": ["Crush: 85 t ✓", "Pull: 6.6 t ✗", "Steel takes the pull"]
+    "lines": [
+      "Crush: 85 t ✓",
+      "Pull: 6.6 t ✗",
+      "Steel takes the pull"
+    ]
   },
-  "source": ["Eurocode 2 (EN 1992-1-1), Table 3.1 · C30/37", "Simulated test at standard values"],
+  "source": [
+    "Eurocode 2 (EN 1992-1-1), Table 3.1 · C30/37",
+    "Simulated test at standard values"
+  ],
   "cta": "NEXT TEST? Comment ↓",
   "caption": "A 15 cm concrete cube: crushed, then pulled 🧱 What was your guess? What should we test next? 👇 #concrete #engineering #physics #science #satisfying #civilengineering #qualitycontrol #3d",
   "sources_detail": [
     "EN 1992-1-1 (Eurocode 2), Table 3.1: C30/37 -> fck = 30 MPa, fck,cube = 37 MPa, fctm = 2.9 MPa",
     "37 MPa x 0.0225 m2 = 832 kN = 84.9 t ; 2.9 MPa x 0.0225 m2 = 65.3 kN = 6.65 t"
-  ]
+  ],
+  "handle": "@WonderLoopTV-sd"
 }

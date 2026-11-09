@@ -390,6 +390,9 @@ function overlay(cfg,T,t,s){
   panel(W/2-340,262,680,74,37,'rgba(20,22,26,0.88)');
   c.save();c.fillStyle=COL.brand;c.beginPath();c.arc(W/2-292,299,12,0,7);c.fill();c.restore();
   txt(cfg.series,W/2+18,301,fitText(cfg.series,580,32),'#fff');
+  // channel handle, mid-frame on the bench base: hard to crop out of a re-upload
+  if(cfg.handle){c.save();c.globalAlpha=0.55;c.font='700 30px P, DJ';c.textAlign='center';c.textBaseline='middle';
+    c.fillStyle='#ffffff';c.shadowColor='rgba(0,0,0,0.45)';c.shadowBlur=6;c.fillText(cfg.handle,W/2,1395);c.restore();}
 
   const inExplain=t>=T.explain[0]&&t<T.outro[0], inOutro=t>=T.outro[0];
   if(t<T.hook[1]){                                        // hook
