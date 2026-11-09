@@ -991,6 +991,8 @@ def main():
                      "02_cut_in_progress": (mid["strokes_start"] + mid["strokes_end"]) // 2,
                      "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
                      "04_final": lv[-1]["collapse_end"] + 4}
+            if plan["config"]["format"] == "levitate":
+                shots["06_falling"] = (mid["collapse_start"] + mid["collapse_end"]) // 2
             # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
             sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
         else:
