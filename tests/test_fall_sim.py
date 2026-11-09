@@ -68,3 +68,13 @@ def test_crumbs_are_small_and_on_the_board():
     co2, k2, f2 = F.add_crumbs(co, k, f, c, 0.0, 5)
     assert len(co2) > len(co) and len(k2) == len(co2) == len(f2["scale"])
     assert (f2["scale"][len(co):] <= 0.2 + 1e-6).all()
+
+
+def test_pile_stays_inside_the_board_limit():
+    a = (np.arange(8) + 0.5) / 8 * 0.24 - 0.12
+    x, y, z = np.meshgrid(a, a, [0.02, 0.06], indexing="ij")
+    co = np.column_stack((x.ravel(), y.ravel(), z.ravel()))
+    cell = np.array([0.03, 0.03, 0.04])
+    f = F.simulate(co, cell, 0.0, "cake", 7, max_foot=(0.17, 0.115))
+    assert np.abs(f["target"][:, 0]).max() < 0.17 + 0.01
+    assert np.abs(f["target"][:, 1]).max() < 0.115 + 0.01

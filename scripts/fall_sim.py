@@ -40,7 +40,7 @@ def fall_curve(bounce):
             (0.76, 1.0 - bounce), (0.86, 1.0), (0.93, 1.0 - bounce * 0.25), (1.0, 1.0)]
 
 
-def simulate(co, cell, ground_z, material, seed):
+def simulate(co, cell, ground_z, material, seed, max_foot=None):
     """co: Nx3 local centres, cell: piece size. Returns target (Nx3), delay, span, spin (N)."""
     P = params(material)
     rng = np.random.default_rng(seed)
@@ -57,6 +57,9 @@ def simulate(co, cell, ground_z, material, seed):
     # the settled pile is a dome wider than the object; every piece gets its own slot in it,
     # so nothing can overlap or sink through the board
     foot = ext * (1.0 + 0.8 * P["spread"])
+    limit_foot = None if max_foot is None else np.maximum(np.asarray(max_foot, float) - cell[:2] * 0.7, cell[:2])
+    if limit_foot is not None:      # the whole pile stays on the board
+        foot = np.minimum(foot, limit_foot)
     step = max(cell[0], cell[1]) * 1.02
     dz_cell = cell[2] * PACK
     limit = max(dz_cell, 0.72 * (h + cell[2]))       # a settled pile is lower than the object
@@ -74,9 +77,10 @@ def simulate(co, cell, ground_z, material, seed):
             if cap.sum() >= n:
                 break
             top *= 1.05
-        if top <= limit:
+        wider = foot * 1.06 if limit_foot is None else np.minimum(foot * 1.06, limit_foot)
+        if top <= limit or np.allclose(wider, foot):
             break
-        foot = foot * 1.06
+        foot = wider
     col = np.repeat(np.arange(len(gx)), cap)
     lvl = np.concatenate([np.arange(c) for c in cap]) if len(cap) < 4096 else _ranges(cap)
     slot_r = np.hypot(gx[col] / foot[0], gy[col] / foot[1]) + lvl * 1e-6

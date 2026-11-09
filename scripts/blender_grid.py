@@ -784,7 +784,9 @@ def build_grid_scene(plan, out_dir):
         co, kinds = display_subset(co, kinds, surf, int(cfg.get("display_cubes_max", 1200000)), li)
         shown = int(len(co))
         floor_z = -lift if levitate else 0.0
-        fall = fall_sim.simulate(co, cell, floor_z, cfg["material_profile"], cfg["random_seed"] + li)
+        # the pile turns with the object's yaw: keep it inside the board whatever the angle
+        fall = fall_sim.simulate(co, cell, floor_z, cfg["material_profile"], cfg["random_seed"] + li,
+                                 max_foot=(B.BOARD_SIZE[0] / 2 - 0.03, B.BOARD_SIZE[1] / 2 - 0.02))
         real = shown <= REAL_PIECES_MAX
         if real:
             cob, mod = None, None
