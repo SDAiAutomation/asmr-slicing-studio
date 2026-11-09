@@ -693,34 +693,65 @@ def make_piece_obj(pid, b, mats):
 
 
 def build_knife():
-    steel = simple_mat("Steel", (0.75, 0.76, 0.78), 0.12, 1.0)
-    handle_m = simple_mat("Handle", (0.03, 0.025, 0.02), 0.45)
+    """Chef's knife as ONE mesh (copies keep the handle): curved belly, ground bevel, bolster,
+    riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
+    import numpy as np
+    steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
+    set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
+    handle_m = simple_mat("Handle", (0.045, 0.024, 0.014), 0.38)
+    rivet_m = simple_mat("Rivet", (0.75, 0.62, 0.35), 0.25, 1.0)
     bm = bmesh.new()
-    # blade profile in local XY: edge on y=0 from x=-0.11 (tip) to x=0.09 (heel)
-    prof = [(-0.115, 0.012), (-0.10, 0.0), (0.09, 0.0), (0.09, 0.048), (-0.02, 0.046), (-0.09, 0.03)]
-    t = 0.0009
-    edge_t = 0.00008  # a real edge is not infinitely thin; avoids degenerate faces
-    top = [bm.verts.new((x, y, t if y > 0.001 else edge_t)) for x, y in prof]
-    bot = [bm.verts.new((x, y, -t if y > 0.001 else -edge_t)) for x, y in prof]
-    bm.faces.new(top)
-    bm.faces.new(list(reversed(bot)))
-    n = len(prof)
-    for i in range(n):
-        j = (i + 1) % n
-        bm.faces.new((top[i], top[j], bot[j], bot[i]))
+    xs = np.linspace(-0.115, 0.09, 42)
+
+    def edge_y(x):
+        return 0.013 * (max(0.0, -x) / 0.115) ** 2.2
+
+    def spine_y(x):
+        return 0.048 if x > -0.02 else 0.013 + 0.035 * ((x + 0.115) / 0.095) ** 0.75
+
+    rows = []
+    for x in xs:
+        e, s = edge_y(x), spine_y(x)
+        grind = e + (s - e) * 0.42
+        t = 0.0011 * min(1.0, (x + 0.125) / 0.05)
+        rows.append([bm.verts.new((x, e, 0.0)),
+                     bm.verts.new((x, grind, t * 0.75)), bm.verts.new((x, s, t)),
+                     bm.verts.new((x, s, -t)), bm.verts.new((x, grind, -t * 0.75))])
+    for a, b in zip(rows, rows[1:]):
+        for k in range(5):
+            bm.faces.new((a[k], b[k], b[(k + 1) % 5], a[(k + 1) % 5]))
+    bm.faces.new(rows[0])
+    bm.faces.new(list(reversed(rows[-1])))
+
+    def box(centre, size, mi, bevel=0.0, smooth=False):
+        res = bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(centre) @ Matrix.Diagonal((*size, 1.0)))
+        vs = res["verts"]
+        if bevel:
+            es = list({e for v in vs for e in v.link_edges})
+            out = bmesh.ops.bevel(bm, geom=vs + es, offset=bevel, segments=3, profile=0.5, affect="EDGES")
+            faces = out["faces"] + list({f for v in vs if v.is_valid for f in v.link_faces})
+        else:
+            faces = list({f for v in vs for f in v.link_faces})
+        for f in faces:
+            f.material_index, f.smooth = mi, smooth
+
+    box((0.097, 0.024, 0.0), (0.014, 0.048, 0.0065), 0, 0.0012)
+    box((0.163, 0.026, 0.0), (0.118, 0.026, 0.017), 1, 0.0055, True)
+    for x in (0.128, 0.163, 0.198):
+        res = bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.0032, radius2=0.0032, depth=0.0178,
+                                    matrix=Matrix.Translation((x, 0.026, 0.0)))
+        for f in {f for v in res["verts"] for f in v.link_faces}:
+            f.material_index, f.smooth = 2, True
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-    me = bpy.data.meshes.new("Blade")
+    me = bpy.data.meshes.new("Knife")
     bm.to_mesh(me)
-    me.materials.append(steel)
+    bm.free()
+    for m in (steel, handle_m, rivet_m):
+        me.materials.append(m)
     blade = bpy.data.objects.new("Knife", me)
     bpy.context.scene.collection.objects.link(blade)
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0.15, 0.022, 0))
-    handle = bpy.context.object
-    handle.name = "KnifeHandle"
-    handle.scale = (0.12, 0.022, 0.016)
-    handle.data.materials.append(handle_m)
-    handle.parent = blade
     blade.rotation_mode = "QUATERNION"
+    blade.scale = (0.85, 0.85, 0.85)
     return blade
 
 
@@ -927,6 +958,8 @@ def setup_render(scn, cfg, out_dir, final):
             pass
         # small studio scene: few bounces are enough, caustics never matter here
         c.max_bounces = 4
+        scn.render.use_motion_blur = cfg.get("format") == "levitate"
+        scn.render.motion_blur_shutter = 0.45
         c.diffuse_bounces, c.glossy_bounces = 2, 2
         c.transmission_bounces, c.transparent_max_bounces = 2, 4
         c.caustics_reflective = c.caustics_refractive = False
@@ -983,6 +1016,9 @@ def main():
             report = build_scene(plan, out_dir)
         scn = bpy.context.scene
         scn["asmr_plan"] = os.path.abspath(a["plan"])
+        # embed textures/HDRI: relative paths break when the run dir moves between CI jobs
+        # (a missing HDRI renders the whole world magenta)
+        bpy.ops.file.pack_all()
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(out_dir, "scene.blend"))
         # previews: opening, a cut in progress, mid progression, final + one still per stroke
         pv = os.path.join(out_dir, "previews")

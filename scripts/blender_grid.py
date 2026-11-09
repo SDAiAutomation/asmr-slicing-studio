@@ -209,7 +209,37 @@ def fat_mat(M):
     return mat
 
 
+def frosting_mat(M):
+    """Smooth glazed icing: soft sheen, a whisper of surface relief, light through the cream."""
+    mat, nt, bsdf = B.principled("Frosting")
+    bsdf.inputs["Base Color"].default_value = (*M["skin_base"], 1)
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    nz = nt.nodes.new("ShaderNodeTexNoise")
+    B.set_input(nz, "Scale", 55.0)
+    B.set_input(nz, "Detail", 3.0)
+    nt.links.new(tc.outputs["Object"], nz.inputs["Vector"])
+    bump = nt.nodes.new("ShaderNodeBump")
+    B.set_input(bump, "Strength", 0.05)
+    B.set_input(bump, "Distance", 0.0006)
+    nt.links.new(nz.outputs["Fac"], bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    B.set_input(bsdf, "Roughness", 0.3)
+    B.set_input(bsdf, ["Subsurface Weight", "Subsurface"], 0.35)
+    B.set_input(bsdf, "Subsurface Radius", (0.01, 0.006, 0.005))
+    B.set_input(bsdf, "Subsurface Scale", 0.008)
+    B.set_input(bsdf, ["Coat Weight", "Clearcoat"], 0.3)
+    B.set_input(bsdf, ["Coat Roughness", "Clearcoat Roughness"], 0.2)
+    return mat
+
+
+def is_cake(M):
+    return M.get("label") == "CAKE"
+
+
 def steak_materials(M):
+    if is_cake(M):
+        f = frosting_mat(M)
+        return [f, f, f]
     fat = fat_mat(M)
     return [fat, meat_mat(M), fat]
 
@@ -275,7 +305,41 @@ def cube_mat(M, steak):
     L = nt.links
     kind = nt.nodes.new("ShaderNodeAttribute")
     kind.attribute_type, kind.attribute_name = "INSTANCER", "kind"
-    if steak:
+    if is_cake(M):
+        orig = nt.nodes.new("ShaderNodeAttribute")
+        orig.attribute_type, orig.attribute_name = "INSTANCER", "orig"
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        add = nt.nodes.new("ShaderNodeVectorMath")
+        add.operation = "ADD"
+        L.new(orig.outputs["Vector"], add.inputs[0])
+        L.new(tc.outputs["Object"], add.inputs[1])
+        sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+        L.new(add.outputs["Vector"], sep.inputs[0])
+        div = nt.nodes.new("ShaderNodeMath")
+        div.operation = "DIVIDE"
+        div.inputs[1].default_value = OBJECTS["cake"].h
+        L.new(sep.outputs["Z"], div.inputs[0])
+        sponge, cream, icing = M["flesh"], (0.93, 0.86, 0.72), M["skin_base"]
+        layers = B.ramp(nt, [(0.0, sponge), (0.30, cream), (0.36, sponge), (0.62, cream), (0.68, sponge), (0.90, icing)])
+        layers.color_ramp.interpolation = "CONSTANT"
+        L.new(div.outputs[0], layers.inputs["Fac"])
+        # crumb: tiny air pockets, only on the sponge colour shows as darker pores
+        vor = nt.nodes.new("ShaderNodeTexVoronoi")
+        B.set_input(vor, "Scale", 420.0)
+        L.new(add.outputs["Vector"], vor.inputs["Vector"])
+        pores = B.ramp(nt, [(0.0, (0.55, 0.55, 0.55)), (0.14, (1, 1, 1))])
+        L.new(vor.outputs["Distance"], pores.inputs["Fac"])
+        mul = nt.nodes.new("ShaderNodeVectorMath")
+        mul.operation = "MULTIPLY"
+        L.new(layers.outputs["Color"], mul.inputs[0])
+        L.new(pores.outputs["Color"], mul.inputs[1])
+        m, f, a, b, o = B.mix_rgb(nt)
+        L.new(kind.outputs["Fac"], f)
+        L.new(mul.outputs["Vector"], a)
+        b.default_value = (*icing, 1)
+        L.new(o, bsdf.inputs["Base Color"])
+        B.set_input(bsdf, "Roughness", 0.55)
+    elif steak:
         orig = nt.nodes.new("ShaderNodeAttribute")
         orig.attribute_type, orig.attribute_name = "INSTANCER", "orig"
         # shading point in the steak's original space = cube centre + local offset,
@@ -464,7 +528,7 @@ def build_grid_scene(plan, out_dir):
     params = {}
     seam_sets = []
     for mt in {id(m): m for m in mats}.values():
-        add_seams(mt, {}, seam_sets, (0.95, 0.78, 0.55, 1) if levitate else (0.03, 0.006, 0.004, 1))
+        add_seams(mt, {}, seam_sets, (0.95, 0.78, 0.55, 1) if levitate and not is_cake(M) else (0.03, 0.006, 0.004, 1))
     me = object_mesh(shape, "Object")
     for mt in mats:
         me.materials.append(mt)
@@ -537,8 +601,7 @@ def build_grid_scene(plan, out_dir):
             ob.parent = frame_obj
             # whole turns only: the object is upright again when it comes apart, so the cubes match
             turns_z = 2 * math.pi * (1 if li % 2 else -1)
-            long_level = lvl["strokes_end"] - lvl["strokes_start"] >= 2.0 * fps
-            turns_x = (2 * math.pi if long_level else 0.0)
+            turns_x = 0.0  # yaw only: tumbling edge-on hid the object and looked wrong
             B.interp("CONSTANT")
             pivot.rotation_euler = (0.0, 0.0, 0.0)
             pivot.keyframe_insert("rotation_euler", frame=start)
@@ -591,7 +654,7 @@ def build_grid_scene(plan, out_dir):
         if levitate and lvl["cuts"] >= 10:
             rng = np.random.default_rng(int(cfg["random_seed"]) + li)
             B.interp("LINEAR")
-            reach = span * 1.25
+            reach = max(0.34, span * 1.9)  # passes start and end out of frame
             away = Vector((1.6, 0.0, 0.5))
             for ki, k2 in enumerate(extra_knives):
                 f = lvl["strokes_start"] + ki * 3
@@ -599,7 +662,9 @@ def build_grid_scene(plan, out_dir):
                 k2.keyframe_insert("location", frame=max(1, f - 1))
                 side = 1.0
                 while f < lvl["strokes_end"]:
-                    u = Vector(rng.normal(size=3)).normalized()
+                    v = rng.normal(size=3)
+                    v[2] *= 0.5  # mostly sideways slashes, like a blade swung around the object
+                    u = Vector(v).normalized()
                     n_b = u.cross(Vector(rng.normal(size=3))).normalized()
                     k2.rotation_quaternion = B.blade_quat(tuple(n_b), tuple(-u * side))
                     k2.keyframe_insert("rotation_quaternion", frame=f)
@@ -615,7 +680,7 @@ def build_grid_scene(plan, out_dir):
         dense = len(strokes) / max(1, lvl["strokes_end"] - lvl["strokes_start"]) > 0.6
         bsdf = kmat.node_tree.nodes.get("Principled BSDF")
         B.interp("CONSTANT")
-        bsdf.inputs["Alpha"].default_value = 0.35 if dense else 1.0
+        bsdf.inputs["Alpha"].default_value = 0.6 if dense else 1.0
         bsdf.inputs["Alpha"].keyframe_insert("default_value", frame=lvl["strokes_start"])
         bsdf.inputs["Alpha"].default_value = 1.0
         bsdf.inputs["Alpha"].keyframe_insert("default_value", frame=lvl["strokes_end"] + 2)
@@ -638,6 +703,7 @@ def build_grid_scene(plan, out_dir):
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
         B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
+        cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
         B.interp("BEZIER")
         mod[ids["Collapse"]] = 0.0

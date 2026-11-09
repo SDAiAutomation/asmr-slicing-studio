@@ -42,7 +42,7 @@ DEFAULTS = {
     "preview_samples": 12,             # Cycles samples for non --final renders
     "export_resolution": None,         # [w, h]: upscale frames at export (lanczos); None -> as rendered
     "cuts_sequence": None,             # grid format: cuts per level; None -> auto
-    "max_cubes": 20000000,             # grid format: safety cap on the final level
+    "max_cubes": 30000000,             # grid format: safety cap on the final level
     "display_cubes_max": 1200000,      # grid format: cubes actually instanced per level (render budget)
     "label_cuts": "CUTS",
     "label_pieces": None,              # None -> "PIECES" (slices) / "CUBES" (grid)
@@ -179,8 +179,9 @@ class Extruded:
 
     kind = "extruded"
 
-    def __init__(self, ax, ay, h, notch=0.10, fat=0.10, seed_phase=0.6, wobble=0.0):
+    def __init__(self, ax, ay, h, notch=0.10, fat=0.10, seed_phase=0.6, wobble=0.0, regular=False, edge=0.28):
         self.ax, self.ay, self.h = ax, ay, h
+        self.regular, self.edge = regular, edge
         self.notch, self.fat, self.ph, self.wobble = notch, fat, seed_phase, wobble
 
     def radius(self, th):
@@ -189,7 +190,7 @@ class Extruded:
         d = np.angle(np.exp(1j * (th - 1.95)))
         mod = (1 + 0.05 * np.cos(2 * th + self.ph) + 0.045 * np.cos(3 * th + 1.3)
                + 0.02 * np.cos(5 * th + 0.4) - self.notch * np.exp(-(d / 0.28) ** 2))
-        return e * mod
+        return e if self.regular else e * mod
 
     def outline(self, n=240):
         th = np.linspace(0, 2 * np.pi, n, endpoint=False)
@@ -208,7 +209,7 @@ class Extruded:
         swell = 1 + self.wobble * (0.6 * np.sin(2.3 * u + 1.1) * np.sin(1.9 * v + 0.4)
                                    + 0.4 * np.sin(4.1 * u - 3.3 * v + 0.7))
         r = np.clip(self.rel(x, y), 0, 1)
-        edge = 1 - 0.28 * np.clip((r - 0.82) / 0.18, 0, 1) ** 2
+        edge = 1 - self.edge * np.clip((r - 0.82) / 0.18, 0, 1) ** 2
         return self.h * swell * edge
 
     def inside(self, x, y, z):
@@ -230,7 +231,7 @@ class Extruded:
 
 # ribeye-like: ~21 x 14 cm, 2.5-3.2 cm thick, thin fat cap
 STEAK = Extruded(ax=0.105, ay=0.068, h=0.027, fat=0.06, wobble=0.12)
-CAKE = Extruded(ax=0.085, ay=0.085, h=0.055, notch=0.0, fat=0.07, seed_phase=0.0)
+CAKE = Extruded(ax=0.085, ay=0.085, h=0.072, notch=0.0, fat=0.06, seed_phase=0.0, regular=True, edge=0.05)
 
 OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
            "steak": STEAK, "cake": CAKE}
