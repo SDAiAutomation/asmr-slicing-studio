@@ -570,13 +570,8 @@ def build_grid_scene(plan, out_dir):
     extra_knives = []
     centre = Vector((0.0, 0.0, 0.0))
     if levitate:
-        lift = float(cfg["levitate_height"] or max(0.095, span * 0.55))
-        centre = Vector((0.0, 0.0, lift + float(hi[2] - lo[2]) / 2))
-        # decorative knives keep world space; the working knife follows the tumbling object
-        for _ in range(2):
-            k2 = knife.copy()
-            scn.collection.objects.link(k2)
-            extra_knives.append(k2)
+        lift = float(plan["lift"])
+        centre = Vector(plan["object_centre"])
         pivot = bpy.data.objects.new("Pivot", None)
         scn.collection.objects.link(pivot)
         pivot.location = centre
@@ -585,7 +580,6 @@ def build_grid_scene(plan, out_dir):
         scn.collection.objects.link(frame_obj)
         frame_obj.parent = pivot
         frame_obj.location = (0.0, 0.0, -float(hi[2] - lo[2]) / 2)
-        knife.parent = frame_obj
     report = {"levels": [], "failures": []}
 
     def key_param(name, frame, value):
@@ -600,13 +594,18 @@ def build_grid_scene(plan, out_dir):
     cuts_ev = [(c[0], c[1], lvl_cuts.get(c[2])) for c in plan["counters"]["cuts"]]
     pieces_ev = [(c[0], c[1]) for c in plan["counters"]["pieces"]]
     height = float(hi[2] - lo[2])
-    park = Vector((span * 1.6, -0.05, 0.35))   # outside the frame
-    B.interp("BEZIER")
-    knife.location = park
-    knife.rotation_quaternion = B.blade_quat((0, 1, 0), (0, 0, -1))
-    knife.keyframe_insert("location", frame=1)
-    knife.keyframe_insert("rotation_quaternion", frame=1)
-    last_knife = 1
+    knife.scale = (plan["knife_scale"],) * 3
+    B.interp("LINEAR")
+    for i, row in enumerate(plan.get("knife_track", [])):
+        f = i + 1
+        knife.location = row[:3]
+        knife.rotation_quaternion = row[3:]
+        knife.keyframe_insert("location", frame=f)
+        knife.keyframe_insert("rotation_quaternion", frame=f)
+    if levitate:
+        for i, off in enumerate(plan.get("object_reaction", [])):
+            pivot.location = centre + Vector(off)
+            pivot.keyframe_insert("location", frame=i + 1)
 
     for lvl in plan["levels"]:
         li = lvl["level"]
@@ -626,17 +625,10 @@ def build_grid_scene(plan, out_dir):
         scn.collection.objects.link(ob)
         if levitate:
             ob.parent = frame_obj
-            # whole turns only: the object is upright again when it comes apart, so the cubes match
-            turns_z = 2 * math.pi * (1 if li % 2 else -1)
-            turns_x = 0.0  # yaw only: tumbling edge-on hid the object and looked wrong
+            # the object holds still while the blade works: fixed yaw per level
             B.interp("CONSTANT")
-            pivot.rotation_euler = (0.0, 0.0, 0.0)
+            pivot.rotation_euler = (0.0, 0.0, lvl["yaw"])
             pivot.keyframe_insert("rotation_euler", frame=start)
-            B.interp("BEZIER")
-            pivot.keyframe_insert("rotation_euler", frame=lvl["strokes_start"])
-            B.interp("CONSTANT")
-            pivot.rotation_euler = (turns_x, 0.0, turns_z)
-            pivot.keyframe_insert("rotation_euler", frame=lvl["collapse_start"])
         B.set_visibility(ob, start, lvl["collapse_start"])
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
@@ -651,73 +643,6 @@ def build_grid_scene(plan, out_dir):
             ax, f = st["axis"], st["frame"]
             counts[ax] += 1
             key_param(f"n_{ax}", f + 1, counts[ax])
-            gap_next = (strokes[i + 1]["frame"] - f) if i + 1 < len(strokes) else 8
-            if f <= last_knife:
-                continue
-            n = [(1, 0, 0), (0, 1, 0), (0, 0, 1)][ax]
-            d = Vector((0, 0, -1)) if ax < 2 else Vector((0, 1, 0))
-            q = B.blade_quat(n, d)
-            c = Vector((0.0, 0.0, 0.0))
-            c[ax] = st["pos"]
-            if ax < 2:
-                start_p = c + Vector((0, 0, height + 0.03))
-                end_p = c + Vector((0, 0, 0.0004))
-            else:
-                start_p = c + Vector((0, lo[1] - 0.05, 0))
-                end_p = c + Vector((0, hi[1] + 0.01, 0))
-            B.interp("BEZIER")
-            if f - last_knife >= 3 and gap_next >= 3:
-                for ff, loc in ((f - 2, start_p), (f, end_p)):
-                    if ff > last_knife:
-                        knife.location, knife.rotation_quaternion = loc, q
-                        knife.keyframe_insert("location", frame=ff)
-                        knife.keyframe_insert("rotation_quaternion", frame=ff)
-                        last_knife = ff
-            else:
-                knife.location, knife.rotation_quaternion = end_p, q
-                knife.keyframe_insert("location", frame=f)
-                knife.keyframe_insert("rotation_quaternion", frame=f)
-                last_knife = f
-        if levitate and lvl["cuts"] >= 10:
-            rng = np.random.default_rng(int(cfg["random_seed"]) + li)
-            B.interp("LINEAR")
-            reach = max(0.34, span * 1.9)  # passes start and end out of frame
-            away = Vector((1.6, 0.0, 0.5))
-            for ki, k2 in enumerate(extra_knives):
-                f = lvl["strokes_start"] + ki * 3
-                k2.location = away
-                k2.keyframe_insert("location", frame=max(1, f - 1))
-                side = 1.0
-                while f < lvl["strokes_end"]:
-                    v = rng.normal(size=3)
-                    v[2] *= 0.5  # mostly sideways slashes, like a blade swung around the object
-                    u = Vector(v).normalized()
-                    n_b = u.cross(Vector(rng.normal(size=3))).normalized()
-                    k2.rotation_quaternion = B.blade_quat(tuple(n_b), tuple(-u * side))
-                    k2.keyframe_insert("rotation_quaternion", frame=f)
-                    k2.location = centre + u * reach * side
-                    k2.keyframe_insert("location", frame=f)
-                    k2.location = centre - u * reach * side
-                    k2.keyframe_insert("location", frame=f + 5)
-                    k2.keyframe_insert("rotation_quaternion", frame=f + 5)
-                    f += 6
-                k2.location = away
-                k2.keyframe_insert("location", frame=f + 1)
-        # fast cutting reads as a blur: make the blade translucent while strokes are dense
-        dense = len(strokes) / max(1, lvl["strokes_end"] - lvl["strokes_start"]) > 0.6
-        bsdf = kmat.node_tree.nodes.get("Principled BSDF")
-        B.interp("CONSTANT")
-        bsdf.inputs["Alpha"].default_value = 0.6 if dense else 1.0
-        bsdf.inputs["Alpha"].keyframe_insert("default_value", frame=lvl["strokes_start"])
-        bsdf.inputs["Alpha"].default_value = 1.0
-        bsdf.inputs["Alpha"].keyframe_insert("default_value", frame=lvl["strokes_end"] + 2)
-        # lift the knife away before the collapse
-        B.interp("BEZIER")
-        f_up = max(last_knife + 2, lvl["strokes_end"] + 3)
-        knife.location = park
-        knife.keyframe_insert("location", frame=f_up + 4)
-        knife.keyframe_insert("rotation_quaternion", frame=f_up + 4)
-        last_knife = f_up + 4
 
         # cubes
         t_l = time.time()
@@ -735,16 +660,18 @@ def build_grid_scene(plan, out_dir):
         B.interp("BEZIER")
         mod[ids["Collapse"]] = 0.0
         # levitate: the pieces burst apart in the air for a beat, then drop on the board
-        drop = lvl["collapse_start"] + (int(0.12 * fps) if levitate else 0)
+        drop = lvl["collapse_start"] + (int(0.2 * fps) if levitate else 0)
         cob.keyframe_insert(data_path=path, frame=drop)
         mod[ids["Collapse"]] = 1.0
         cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
         if levitate:
+            cob.rotation_euler = (0.0, 0.0, lvl["yaw"])
             cob.location = (0, 0, lift)
+            cob.keyframe_insert("location", frame=lvl["collapse_start"])
             cob.keyframe_insert("location", frame=drop)
             cob.scale = (1, 1, 1)
             cob.keyframe_insert("scale", frame=lvl["collapse_start"])
-            cob.scale = (1.1, 1.1, 1.1)
+            cob.scale = (1.14, 1.14, 1.14)
             cob.keyframe_insert("scale", frame=drop)
             cob.location = (0, 0, 0)
             cob.keyframe_insert("location", frame=lvl["collapse_end"])
@@ -809,5 +736,17 @@ def grid_camera(plan, lo, hi, board_size, lift=0.0):
     cam.location = target + view * dist
     cam.rotation_mode = "QUATERNION"
     cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
+    if lift:   # push in while the blade works so the contact zone is clearly visible
+        close = Vector(plan["object_centre"]) + Vector((0, 0.01, -0.012)) + view * dist * 0.82
+        wide = cam.location.copy()
+        B.interp("BEZIER")
+        for lv in plan["levels"]:
+            ramp = max(3, int(0.25 * plan["fps"]))
+            for f, loc in ((lv["start_frame"], wide), (lv["strokes_start"], close),
+                           (lv["collapse_start"], close), (lv["collapse_start"] + ramp, wide)):
+                cam.location = loc
+                cam.keyframe_insert("location", frame=f)
+        cam.location = wide
+        cam.keyframe_insert("location", frame=plan["total_frames"])
     # no depth of field: the counters are camera-attached and must stay sharp
     return cam

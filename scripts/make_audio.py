@@ -176,28 +176,22 @@ def whoosh(rng, dur=0.16):
 
 def grid_events(plan, buf, P, rng, samples, events, t_of):
     """Grid format: a chop per stroke frame, a crumble cascade when the object collapses."""
-    # keep a readable rhythm: at most ~10 chops per second, extra strokes thicken each chop
     fps = plan["fps"]
-    step = max(1, round(fps / 10))
-    groups = {}
-    for st in plan["strokes"]:
-        groups.setdefault(st["frame"] - (st["frame"] - 1) % step, []).append(st)
-    prev_f = -999
-    for f in sorted(groups):
-        g = groups[f]
-        nh = len(g)
-        if f - prev_f > 8:  # the knife travels before this chop: approach sound
-            place(buf, max(0.0, t_of(f) - 0.16), whoosh(rng), 0.0, rng.uniform(0.6, 0.9))
-            events.append({"t": max(0.0, t_of(f) - 0.16), "type": "approach"})
-        prev_f = f
-        x = np.mean([s_["pos"] if s_["axis"] == 0 else 0.0 for s_ in g])
-        span = max(0.05, plan["levels"][g[0]["level"]]["ext"][0] / 2)
-        pan = float(np.clip(x / span * 0.5, -0.6, 0.6))
-        dur = 0.035 if nh > 1 else 0.06   # short, crisp chops so fast phases keep a rhythm
-        gain = rng.uniform(0.8, 1.1) * (1.0 if nh == 1 else min(1.3, 0.85 + 0.12 * np.log2(nh)))
-        place(buf, t_of(f), chop(rng, P, samples, dur, nh), pan, gain)
-        events.append({"t": t_of(f), "type": "contact", "strokes": nh})
-        events.append({"t": t_of(f) + dur, "type": "end_of_cut", "strokes": nh})
+    # one sound per visible blade pass, placed on the frames where the edge enters and
+    # leaves the object: the audio cannot drift from the animation
+    for bs in plan.get("blade_strokes", []):
+        tm = bs["time"]
+        c, x = tm["contact"], tm["exit"]
+        nh = bs["group_cuts"]
+        place(buf, max(0.0, t_of(c) - 0.16), whoosh(rng), 0.0, rng.uniform(0.5, 0.8))
+        events.append({"t": max(0.0, t_of(c) - 0.16), "type": "approach", "frame": c})
+        pos = bs["anchor"][0]
+        pan = float(np.clip(pos / 0.12, -0.6, 0.6))
+        dur = max(0.03, (x - c) / fps)
+        gain = rng.uniform(0.85, 1.05) * (1.0 if nh == 1 else min(1.3, 0.85 + 0.12 * np.log2(nh)))
+        place(buf, t_of(c), chop(rng, P, samples, dur, nh), pan, gain)
+        events.append({"t": t_of(c), "type": "contact", "frame": c, "strokes": nh})
+        events.append({"t": t_of(x), "type": "end_of_cut", "frame": x, "strokes": nh})
     for lvl in plan["levels"]:
         t0, t1 = t_of(lvl["collapse_start"]), t_of(lvl["collapse_end"])
         n = int(SR * (t1 - t0 + 0.4))

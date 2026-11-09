@@ -38,6 +38,7 @@ DEFAULTS = {
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
     "format": "slices",                # "slices" (progressive halving) | "grid" (levels of grid cuts -> cubes)
                                        # | "levitate" (grid levels cut in mid-air, pieces drop on the board)
+    "inspect_contacts": False,         # render extra stills around blade contacts (QA)
     "levitate_height": None,           # levitate format: gap board -> object (m); None -> from object size
     "preview_samples": 12,             # Cycles samples for non --final renders
     "export_resolution": None,         # [w, h]: upscale frames at export (lanczos); None -> as rendered
@@ -53,6 +54,13 @@ GRID_AUTO_CUTS = [4, 10, 15, 25, 40, 60, 100, 160, 250, 400, 600, 1000]
 AUTO_SEQUENCE = [2, 3, 4, 5, 8, 10, 15, 25, 50, 100, 200, 400, 1000, 2500, 5000, 10000, 25000, 50000]
 
 DIRECTION_NAMES = ["vertical", "horizontal", "diagonal", "cross", "angled", "random3d"]
+
+
+def levitate_lift(cfg, shape):
+    """Gap between the board and the bottom of a levitating object (metres)."""
+    lo, hi = shape.bbox()
+    span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
+    return float(cfg.get("levitate_height") or max(0.095, span * 0.55))
 
 
 def load_config(path_or_dict):

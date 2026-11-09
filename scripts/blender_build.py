@@ -696,6 +696,7 @@ def build_knife():
     """Chef's knife as ONE mesh (copies keep the handle): curved belly, ground bevel, bolster,
     riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
     import numpy as np
+    from knife_traj import edge_y
     steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
     set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
     handle_m = simple_mat("Handle", (0.045, 0.024, 0.014), 0.38)
@@ -703,15 +704,12 @@ def build_knife():
     bm = bmesh.new()
     xs = np.linspace(-0.115, 0.09, 42)
 
-    def edge_y(x):
-        return 0.013 * (max(0.0, -x) / 0.115) ** 2.2
-
     def spine_y(x):
         return 0.048 if x > -0.02 else 0.013 + 0.035 * ((x + 0.115) / 0.095) ** 0.75
 
     rows = []
     for x in xs:
-        e, s = edge_y(x), spine_y(x)
+        e, s = float(edge_y(x)), spine_y(x)
         grind = e + (s - e) * 0.42
         t = 0.0011 * min(1.0, (x + 0.125) / 0.05)
         rows.append([bm.verts.new((x, e, 0.0)),
@@ -1033,6 +1031,16 @@ def main():
                      "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
                      "04_final": lv[-1]["collapse_end"] + 4}
             if plan["config"]["format"] == "levitate":
+                if plan["config"].get("inspect_contacts"):
+                    seen = {}
+                    for bs in plan.get("blade_strokes", []):
+                        seen.setdefault(bs["axis"], bs)
+                    n = 10
+                    for bs in seen.values():
+                        c = bs["time"]["contact"]
+                        for f in (c - 1, c, c + 2):
+                            shots[f"{n}_contact"] = f
+                            n += 1
                 shots["06_falling"] = mid["collapse_start"] + (mid["collapse_end"] - mid["collapse_start"]) // 3
             # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
             sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
