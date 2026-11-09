@@ -63,7 +63,7 @@ Les guides type « Pehle se pieces banao aur seams reveal karo » pré-découpen
 | `fps`, `resolution`, `preview_resolution` | 30, 1080×1920, 540×960 | 9:16 |
 | `render_engine` | `eevee` | `cycles` = plus réaliste, beaucoup plus lent |
 | `watermark`, `show_counter`, `music` | `""`, true, false | |
-| `board_watermark` | `"@sliceloop"` | pseudo gravé sur la planche (coin avant gauche), anti-repost ; `""` pour l'enlever |
+| `board_watermark` | `"@BreakpointLabTV"` | pseudo gravé sur la planche (coin avant gauche), anti-repost ; `""` pour l'enlever |
 | `random_seed` | 42 | même seed = même vidéo |
 | `output_path` | `runs` | chaque run crée un dossier neuf horodaté |
 

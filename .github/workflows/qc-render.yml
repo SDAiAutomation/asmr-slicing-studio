@@ -190,7 +190,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
       - name: Delete intermediate artifacts
-        if: always()
+        # keep the frames when the MP4 failed, so a fix can reuse them
+        if: always() && env.DRIVE_OK == '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -113,6 +113,14 @@ vec2 map(vec3 p){
     vec2 s=specimen(p);
     if(mode>0.5) { if(spec>2.5){ s.x=max(s.x,-sdRoundBox(p-vec3(0,0.52,0),vec3(0.2,0.09,0.2),0.015)); } }
     res=opU(res,s);
+  } else if(spec<-1.5){
+    // showcase: two intact eggs, one standing (left), one lying (right), on small cups
+    vec3 c=p; c.x=abs(c.x)-0.42;
+    res=opU(res,vec2(sdCylY(c-vec3(0,0.33,0),0.03,0.13),3.0));
+    vec3 a=p-vec3(-0.42,0.36+0.25,0.0);
+    res=opU(res,vec2(sdEll(a,vec3(0.2,a.y>0.0?0.31:0.25,0.2)),7.0));
+    vec3 b=p-vec3(0.42,0.36+0.2,0.0);
+    res=opU(res,vec2(sdEll(b,vec3(b.x>0.0?0.31:0.255,0.2,0.2)),7.0));
   } else {
     // showcase: reinforced concrete beam on two supports, steel bars sticking out
     vec3 q=p-vec3(0,0.62,0);
@@ -346,12 +354,14 @@ function sceneState(T,t){
   s.camAng=0.62+0.10*Math.sin(lt*0.22)-0.05*sm(0,20,lt)+(R.i%2?-0.25:0);
   s.camDist=lerp(5.5,5.0,sm(0,8,lt))-0.3*sm(R.qStart,R.qEnd,t)+0.3*sm(R.breakT,R.breakT+1.2,t);
   s.camH=0.75;s.camTY=1.22;
-  if(replay){const k=tReal-R.replayT0;s.camAng=0.95+0.10*k+(R.i%2?-0.45:0);s.camDist=2.9-0.08*k;s.camH=0.08;s.camTY=kind==='traction'?0.98:0.62;s.shake=[s.shake[0]*0.5,s.shake[1]*0.5];}
+  if(spec.startsWith('egg')){s.camDist-=0.9;s.camTY=1.02;s.camH=0.6;}
+  if(replay){const k=tReal-R.replayT0;s.camAng=0.95+0.10*k+(R.i%2?-0.45:0);s.camDist=2.9-0.08*k;s.camH=0.08;s.camTY=kind==='traction'?0.98:(spec==='egg_up'?0.7:0.62);s.shake=[s.shake[0]*0.5,s.shake[1]*0.5];}
   s.replay=replay;
   if(showcase||outro){
     const lt2=t-T.explain[0];
-    s.mode=2;s.spec=-1;s.broken=0;s.frag=null;s.shake=[0,0];
+    s.mode=2;s.spec=-1;s.broken=0;s.frag=null;s.shake=[0,0];s.crackAmt=0;
     s.camAng=0.5+0.35*Math.sin(lt2*0.18);s.camDist=lerp(3.6,3.2,sm(0,15,lt2));s.camH=1.0;s.camTY=1.05;
+    if(CFG.explain&&CFG.explain.scene==='egg_pair'){s.spec=-2;s.camAng=0.25*Math.sin(lt2*0.2);s.camDist=lerp(3.5,3.2,sm(0,15,lt2));s.camH=0.6;s.camTY=0.95;}
   }
   s.R=R;s.L=L;return s;
 }
@@ -390,6 +400,9 @@ function overlay(cfg,T,t,s){
   panel(W/2-340,262,680,74,37,'rgba(20,22,26,0.88)');
   c.save();c.fillStyle=COL.brand;c.beginPath();c.arc(W/2-292,299,12,0,7);c.fill();c.restore();
   txt(cfg.series,W/2+18,301,fitText(cfg.series,580,32),'#fff');
+  // channel handle, mid-frame on the bench base: hard to crop out of a re-upload
+  if(cfg.handle){c.save();c.globalAlpha=0.55;c.font='700 30px P, DJ';c.textAlign='center';c.textBaseline='middle';
+    c.fillStyle='#ffffff';c.shadowColor='rgba(0,0,0,0.45)';c.shadowBlur=6;c.fillText(cfg.handle,W/2,1395);c.restore();}
 
   const inExplain=t>=T.explain[0]&&t<T.outro[0], inOutro=t>=T.outro[0];
   if(t<T.hook[1]){                                        // hook
