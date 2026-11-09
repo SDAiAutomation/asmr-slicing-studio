@@ -32,7 +32,7 @@ DEFAULTS = {
     "output_path": "runs",
     "random_seed": 42,
     "watermark": "",                   # e.g. "@mychannel"; empty -> none
-    "board_watermark": "@WonderLoopTV-sd",   # handle burned into the cutting board (anti-repost); "" -> none
+    "board_watermark": "@BreakpointLabTV",   # handle burned into the cutting board (anti-repost); "" -> none
     "show_counter": True,
     "hook_text": "",                   # big question shown during the opening seconds
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)

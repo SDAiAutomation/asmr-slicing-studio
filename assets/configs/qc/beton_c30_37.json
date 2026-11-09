@@ -87,5 +87,5 @@
     "EN 1992-1-1 (Eurocode 2), Table 3.1 : C30/37 -> fck = 30 MPa, fck,cube = 37 MPa, fctm = 2,9 MPa",
     "Calcul : 37 MPa x 0,0225 m2 = 832 kN = 84,9 t ; 2,9 MPa x 0,0225 m2 = 65,3 kN = 6,65 t"
   ],
-  "handle": "@WonderLoopTV-sd"
+  "handle": "@BreakpointLabTV"
 }
