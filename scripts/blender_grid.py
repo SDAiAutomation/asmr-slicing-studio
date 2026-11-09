@@ -480,7 +480,7 @@ def build_grid_scene(plan, out_dir):
     extra_knives = []
     centre = Vector((0.0, 0.0, 0.0))
     if levitate:
-        lift = float(cfg["levitate_height"] or max(0.11, span * 0.62))
+        lift = float(cfg["levitate_height"] or max(0.095, span * 0.55))
         centre = Vector((0.0, 0.0, lift + float(hi[2] - lo[2]) / 2))
         # decorative knives keep world space; the working knife follows the tumbling object
         for _ in range(2):
@@ -712,7 +712,7 @@ def grid_camera(plan, lo, hi, board_size, lift=0.0):
     half_w = board_size[0] / 2 / 0.92
     elev, azim = math.radians(22 if lift else 34), math.radians(-90)
     view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
-    target = Vector((0, 0.01, 0.01 + lift * 0.55))
+    target = Vector((0, 0.01, 0.01 + lift * 0.7))
     dist = half_w / math.tan(hfov / 2)
     cam.location = target + view * dist
     cam.rotation_mode = "QUATERNION"
