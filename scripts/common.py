@@ -22,7 +22,12 @@ DEFAULTS = {
     "cutting_speed": "auto",           # "auto" | "slow" | "medium" | "fast"
     "camera_style": "follow",          # "follow" | "static"
     "audio_profile": None,             # None -> same as material_profile
-    "music": True,                     # grid/levitate: melodic layer driven by the blade strokes
+    "music": False,                    # legacy flag; the sound is chosen with audio_preset
+    "audio_preset": "asmr_pure",       # "asmr_pure" | "musical_asmr" | "rhythmic_satisfying"
+    "audio_bus_gains": None,           # {bus: gain} overrides, see make_audio.AUDIO_PRESETS
+    "knife_slot_start": 0.55,          # grid: seconds per visible blade pass on the first level
+    "knife_slot_end": 0.30,            # ... and on the last level (dense levels group cuts)
+    "knife_emphasis": 1.5,             # slow-down factor of the key passes (first and very last)
     "video_duration": None,            # seconds; None -> auto from piece count
     "resolution": [1080, 1920],
     "preview_resolution": [540, 960],

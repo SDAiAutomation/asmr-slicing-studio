@@ -2,7 +2,7 @@
 
 Six event layers per cut (contact, penetration, traversal, end of cut,
 separation, surface contact), material-specific, seeded variation, short room
-reverb, a melodic layer on grid/levitate videos ("music": false removes it), peak-normalised below clipping.
+reverb, five mixable buses with three presets (audio_preset), loudness-normalised below clipping.
 
 Usage:
     python make_audio.py plan.json out_dir
@@ -16,7 +16,7 @@ import sys
 import wave
 
 import numpy as np
-from scipy import signal
+from scipy import ndimage, signal
 
 SR = 48000
 
@@ -174,19 +174,30 @@ def whoosh(rng, dur=0.16):
     return y * np.sin(np.linspace(0, np.pi, n)) ** 2 * 0.25
 
 
+# Sound presets: one gain per bus. The cutting sounds always lead; 0 mutes a bus.
+BUSES = ("cutting_asmr", "piece_impacts", "musical_notes", "ambient_layer", "reward_fx")
+AUDIO_PRESETS = {
+    "asmr_pure": {"cutting_asmr": 1.0, "piece_impacts": 1.0, "musical_notes": 0.0, "ambient_layer": 0.35, "reward_fx": 0.0},
+    "musical_asmr": {"cutting_asmr": 1.0, "piece_impacts": 0.95, "musical_notes": 0.42, "ambient_layer": 0.5, "reward_fx": 0.45},
+    "rhythmic_satisfying": {"cutting_asmr": 0.85, "piece_impacts": 0.95, "musical_notes": 0.95, "ambient_layer": 0.9, "reward_fx": 0.8},
+}
+LOUDNESS_TARGET = -16.0     # LUFS, the usual level for short-form social video
+
 # Musical layer: everything is placed on the plan's own frames, so it stays locked to the blade.
-PROGRESSION = [(0, 3, 7, 12), (-4, 0, 3, 8), (3, 7, 10, 15), (-2, 2, 5, 10)]  # Am F C G, as semitones
-ROOTS = [220.0, 196.0, 246.94, 174.61]
+PROGRESSION = [(0, 3, 7, 10), (-4, 0, 3, 7), (3, 7, 10, 14), (-2, 2, 5, 9)]  # Am7 Fmaj7 Cmaj7 G7 (semitones)
+ROOTS = [110.0, 98.0, 123.47, 87.31]                                         # low on purpose: never arcade
+MOTIFS = [(0, 1, 2, 3), (0, 2, 1, 3), (1, 2, 3, 2), (0, 3, 2, 1), (2, 1, 3, 0)]
 
 
-def pluck(f, dur=0.55):
-    """Soft mallet: a warm fundamental, a bright bar overtone that dies quickly."""
+def pluck(f, dur=0.5, bright=0.5):
+    """Warm felt mallet: mostly fundamental, a whisper of overtone, gentle low-passed attack."""
     t = np.arange(int(SR * dur)) / SR
-    y = (np.sin(2 * np.pi * f * t) * np.exp(-t / 0.2) + 0.35 * np.sin(2 * np.pi * f * 2 * t) * np.exp(-t / 0.09)
-         + 0.22 * np.sin(2 * np.pi * f * 4.02 * t) * np.exp(-t / 0.025))
-    a = int(SR * 0.002)
+    y = (np.sin(2 * np.pi * f * t) * np.exp(-t / 0.22)
+         + 0.22 * bright * np.sin(2 * np.pi * f * 2 * t) * np.exp(-t / 0.1)
+         + 0.05 * bright * np.sin(2 * np.pi * f * 3.98 * t) * np.exp(-t / 0.03))
+    a = int(SR * 0.006)
     y[:a] *= np.linspace(0, 1, a)
-    return y
+    return signal.sosfilt(signal.butter(2, 2600, "low", fs=SR, output="sos"), y)
 
 
 def pad(freqs, dur):
@@ -195,42 +206,77 @@ def pad(freqs, dur):
     t = np.arange(n) / SR
     y = sum(np.sin(2 * np.pi * f * t) + 0.5 * np.sin(2 * np.pi * f * 1.004 * t) for f in freqs) / len(freqs)
     y *= 0.8 + 0.2 * np.sin(2 * np.pi * 0.7 * t)
-    fade = min(n // 3, int(SR * 0.25))
+    fade = max(1, min(n // 3, int(SR * 0.25)))
     e = np.ones(n)
     e[:fade] = np.linspace(0, 1, fade)
     e[-fade:] = np.linspace(1, 0, fade)
     return y * e
 
 
-def music_layer(plan, buf, rng, t_of):
-    """A chord per level, one rising note per blade pass, a sparkle and a bass hit at each fall."""
+def music_layer(plan, B, rng, t_of):
+    """Chord bed per level, sparse rising notes on the blade, rewards only on key steps."""
     root = ROOTS[int(rng.integers(len(ROOTS)))]
     note = lambda semis: root * 2 ** (semis / 12)
-    n_lv = max(1, len(plan["levels"]) - 1)
+    last = len(plan["levels"]) - 1
     blades = {}
     for b in plan.get("blade_strokes", []):
         blades.setdefault(b["level"], []).append(b)
+    motif_shift = int(rng.integers(len(MOTIFS)))
     for lvl in plan["levels"]:
         li = lvl["level"]
         chord = PROGRESSION[li % len(PROGRESSION)]
-        lift = li / n_lv          # the whole track swells towards the last level
+        lift = li / max(1, last)      # the whole track swells towards the last level
+        octave = 12 if lift >= 0.5 else 0
         t0, t1 = t_of(lvl["start_frame"]), t_of(lvl["collapse_end"])
-        place(buf, t0, pad([note(s - 12) for s in chord[:3]], t1 - t0 + 0.3), 0.0, 0.05 + 0.05 * lift)
-        place(buf, t_of(lvl["strokes_start"]), pluck(note(chord[0] - 24), 0.9), 0.0, 0.42)
-        for i, b in enumerate(blades.get(li, [])):
-            # climbing arpeggio: up through the chord, one octave higher every 4 passes
-            semis = chord[i % 4] + 12 * min(2, i // 4)
-            pan = float(np.clip(b["anchor"][0] / 0.12, -0.5, 0.5))
-            place(buf, t_of(b["time"]["exit"]), pluck(note(semis)), pan, 0.26 + 0.1 * lift)
-        # the fall: a quick upward run, then a deep hit when the pieces land
+        place(B["ambient_layer"], t0, pad([note(s) for s in chord[:3]], t1 - t0 + 0.3), 0.0, 0.05 + 0.07 * lift)
+        motif = MOTIFS[(li + motif_shift) % len(MOTIFS)]
+        passes = blades.get(li, [])
+        every = max(1, len(passes) // 16)  # dense levels: a phrase, not a note per cut
+        for i, b in enumerate(passes[::every]):
+            semis = chord[motif[i % 4]] + 12 + octave * (i // 8 % 2)
+            pan = float(np.clip(b["anchor"][0] / 0.12, -0.4, 0.4))
+            v = 0.32 + 0.14 * lift + float(rng.uniform(-0.03, 0.03))
+            place(B["musical_notes"], t_of(b["time"]["exit"]), pluck(note(semis)), pan, v)
         cs, ce = t_of(lvl["collapse_start"]), t_of(lvl["collapse_end"])
-        for k in range(8):
-            place(buf, cs + (ce - cs) * 0.75 * k / 8, pluck(note(chord[k % 4] + 12 + 12 * (k // 4)), 0.4),
-                  0.5 * np.sin(k * 1.7), 0.14 + 0.012 * k)
-        place(buf, ce - 0.05, pluck(note(chord[0] - 24), 1.0), 0.0, 0.55 + 0.25 * lift)
+        land = cs + (ce - cs) * 0.68
+        key_step = li == last or li % 3 == 2
+        if key_step:   # discreet rise into the landing, then a short warm chord
+            for k in range(4):
+                place(B["musical_notes"], cs + (land - cs) * k / 4, pluck(note(chord[k] + 12), 0.3), 0.0, 0.1 + 0.03 * k)
+            for k, s in enumerate(chord[:3]):
+                place(B["reward_fx"], land + k * 0.03, pluck(note(s + 12), 0.8, 0.8), (k - 1) * 0.3, 0.3 + 0.15 * (li == last))
+        # soft bass exactly on the main landing, level-dependent, never a boom
+        place(B["reward_fx"], land, pluck(note(chord[0] - 12), 0.7, 0.2), 0.0, 0.3 + 0.2 * lift)
 
 
-def grid_events(plan, buf, P, rng, samples, events, t_of):
+def loudness_lufs(x):
+    """Integrated loudness (ITU-R BS.1770: K-weighting, 400 ms blocks, gating)."""
+    b1 = signal.butter(2, 1500, "high", fs=SR, output="sos")
+    b2 = signal.butter(2, 38, "high", fs=SR, output="sos")
+    y = signal.sosfilt(b2, signal.sosfilt(b1, x, axis=0), axis=0)
+    blk = int(0.4 * SR)
+    hop = int(0.1 * SR)
+    p = np.array([float((y[i:i + blk] ** 2).sum(1).mean()) for i in range(0, max(1, len(y) - blk), hop)])
+    p = p[p > 10 ** (-70 / 10)]
+    if not len(p):
+        return -70.0
+    gate = 10 * np.log10(p.mean()) - 10
+    g = p[10 * np.log10(p) > gate]
+    return float(-0.691 + 10 * np.log10(g.mean())) if len(g) else -70.0
+
+
+def limit(x, ceiling):
+    """Fast look-ahead peak limiter: keeps transients under the ceiling without clipping."""
+    env = np.abs(x).max(1)
+    w = int(SR * 0.004)
+    env = ndimage.maximum_filter1d(env, 2 * w + 1)
+    g = np.minimum(1.0, ceiling / np.maximum(env, 1e-9))
+    g = ndimage.minimum_filter1d(g, 2 * w + 1)
+    g = ndimage.uniform_filter1d(g, 2 * w + 1)
+    return x * g[:, None]
+
+
+def grid_events(plan, B, P, rng, samples, events, t_of):
     """Grid format: a chop per stroke frame, a crumble cascade when the object collapses."""
     fps = plan["fps"]
     # one sound per visible blade pass, placed on the frames where the edge enters and
@@ -239,13 +285,13 @@ def grid_events(plan, buf, P, rng, samples, events, t_of):
         tm = bs["time"]
         c, x = tm["contact"], tm["exit"]
         nh = bs["group_cuts"]
-        place(buf, max(0.0, t_of(c) - 0.16), whoosh(rng), 0.0, rng.uniform(0.5, 0.8))
+        place(B["cutting_asmr"], max(0.0, t_of(c) - 0.16), whoosh(rng), 0.0, rng.uniform(0.5, 0.8))
         events.append({"t": max(0.0, t_of(c) - 0.16), "type": "approach", "frame": c})
         pos = bs["anchor"][0]
         pan = float(np.clip(pos / 0.12, -0.6, 0.6))
         dur = max(0.03, (x - c) / fps)
         gain = rng.uniform(0.85, 1.05) * (1.0 if nh == 1 else min(1.3, 0.85 + 0.12 * np.log2(nh)))
-        place(buf, t_of(c), chop(rng, P, samples, dur, nh), pan, gain)
+        place(B["cutting_asmr"], t_of(c), chop(rng, P, samples, dur, nh), pan, gain)
         events.append({"t": t_of(c), "type": "contact", "frame": c, "strokes": nh})
         events.append({"t": t_of(x), "type": "end_of_cut", "frame": x, "strokes": nh})
     for lvl in plan["levels"]:
@@ -259,9 +305,9 @@ def grid_events(plan, buf, P, rng, samples, events, t_of):
             y[pos:pos + k] += seg[: n - pos] * rng.uniform(0.2, 1.0)
         y = signal.sosfilt(signal.butter(2, [600, 7000], "band", fs=SR, output="sos"), y)
         y *= np.concatenate([np.linspace(0.3, 1, n // 3), np.linspace(1, 0, n - n // 3) ** 1.5])
-        place(buf, t0, y, 0.0, 0.5)
+        place(B["piece_impacts"], t0, y, 0.0, 0.5)
         thud = tone(rng, P["land"]["f0"], P["land"]["decay"] * 1.5)
-        place(buf, t1 - 0.05, thud, 0.0, P["land"]["gain"] * 1.4)
+        place(B["piece_impacts"], t0 + (t1 - t0) * 0.68, thud, 0.0, P["land"]["gain"] * 1.4)
         events.append({"t": t0, "type": "separation", "level": lvl["level"]})
         events.append({"t": t1, "type": "surface_contact", "level": lvl["level"]})
 
@@ -274,15 +320,19 @@ def render(plan, out_dir):
     rng = np.random.default_rng(cfg["random_seed"] + 7)
     samples = load_samples(prof_name)
     total_s = plan["total_frames"] / fps
-    buf = np.zeros((int(total_s * SR) + SR, 2))
+    buf_shape = (int(total_s * SR) + SR, 2)
+    B = {name: np.zeros(buf_shape) for name in BUSES}
+    buf = B["cutting_asmr"]
+    preset = cfg.get("audio_preset") or "asmr_pure"
+    gains = dict(AUDIO_PRESETS[preset], **(cfg.get("audio_bus_gains") or {}))
     events = []
     t_of = lambda f: (f - 1) / fps  # frame 1 is t = 0
 
     # scene width for stereo placement
     if plan.get("kind") == "grid":
-        grid_events(plan, buf, P, rng, samples, events, t_of)
-        if cfg.get("music"):
-            music_layer(plan, buf, rng, t_of)
+        grid_events(plan, B, P, rng, samples, events, t_of)
+        if gains["musical_notes"] > 0 or gains["reward_fx"] > 0:
+            music_layer(plan, B, rng, t_of)
     xs = [h["plane_point"][0] + h["offset"][0] for h in plan.get("hits", [])] or [0]
     span = max(0.05, max(abs(min(xs)), abs(max(xs))))
 
@@ -361,26 +411,36 @@ def render(plan, out_dir):
             y = tone(rng, l["f0"], l["decay"]) * 0.8
             y = signal.sosfilt(signal.butter(2, 900, "low", fs=SR, output="sos"), y)
         land_t = t1 + 0.3 * rng.uniform(0.7, 1.1)
-        place(buf, land_t, y, pan, l["gain"] * loud)
+        place(B["piece_impacts"], land_t, y, pan, l["gain"] * loud)
         events.append({"t": land_t, "type": "surface_contact", "hit": h["piece"]})
 
     # small, close "kitchen" room: short decaying-noise impulse response
     ir_n = int(SR * 0.09)
     ir = rng.standard_normal((ir_n, 2)) * np.exp(-np.arange(ir_n) / (SR * 0.018))[:, None]
     ir /= np.abs(ir).sum(0)
-    wet = np.stack([signal.fftconvolve(buf[:, i], ir[:, i])[: len(buf)] for i in range(2)], 1)
-    mix = buf + wet * 2.2
+    def room(x):
+        wet = np.stack([signal.fftconvolve(x[:, i], ir[:, i])[: len(x)] for i in range(2)], 1)
+        return x + wet * 2.2
     # very quiet room tone so silence does not sound "dead"
-    mix += signal.sosfilt(signal.butter(2, 400, "low", fs=SR, output="sos"),
-                          rng.standard_normal((len(mix), 2)), axis=0) * 0.0015
-    mix = mix[: int(total_s * SR)]
-    mix = signal.sosfilt(signal.butter(2, 35, "high", fs=SR, output="sos"), mix, axis=0)
-
-    peak = float(np.abs(mix).max()) or 1.0
-    target = 10 ** (-1.0 / 20)  # -1 dBFS
-    mix *= target / peak
+    B["ambient_layer"] += signal.sosfilt(signal.butter(2, 400, "low", fs=SR, output="sos"),
+                                         rng.standard_normal(buf_shape), axis=0) * 0.004
+    for name in ("cutting_asmr", "piece_impacts"):
+        B[name] = room(B[name])
+    for name in ("musical_notes", "reward_fx"):
+        B[name] = B[name] + room(B[name]) * 0.25
+    n_out = int(total_s * SR)
+    hp = signal.butter(2, 35, "high", fs=SR, output="sos")
+    bus_stats = {}
+    mix = np.zeros((n_out, 2))
+    for name in BUSES:
+        y = signal.sosfilt(hp, B[name][:n_out], axis=0) * gains[name]
+        bus_stats[name] = {"gain": gains[name], "peak": round(float(np.abs(y).max()), 4)}
+        mix += y
+    ceiling = 10 ** (-1.0 / 20)
+    mix *= 10 ** ((LOUDNESS_TARGET - loudness_lufs(mix)) / 20)   # loudness first, then transients
+    mix = limit(mix, ceiling)
     pcm = np.clip(mix, -1, 1)
-    clipped = int(np.count_nonzero(np.abs(pcm) >= 0.999))
+    clipped = int(np.count_nonzero(np.abs(pcm) >= 0.9999))
 
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "soundtrack.wav")
@@ -391,10 +451,11 @@ def render(plan, out_dir):
         w.writeframes((pcm * 32767).astype("<i2").tobytes())
     rms = float(np.sqrt((pcm ** 2).mean()))
     info = {"path": path, "duration_s": len(pcm) / SR, "sample_rate": SR, "channels": 2,
-            "peak_dbfs": round(20 * np.log10(np.abs(pcm).max() + 1e-12), 2),
+            "peak_dbfs": round(20.0 * np.log10(np.abs(pcm).max() + 1e-12), 2),
             "rms_dbfs": round(20 * np.log10(rms + 1e-12), 2),
             "clipped_samples": clipped, "profile": prof_name,
-            "used_samples": sorted(samples), "music": bool(plan.get("kind") == "grid" and cfg.get("music")), "events": len(events)}
+            "used_samples": sorted(samples), "music": preset != "asmr_pure", "preset": preset,
+            "loudness_lufs": round(loudness_lufs(pcm), 1), "buses": bus_stats, "events": len(events)}
     with open(os.path.join(out_dir, "audio_events.json"), "w", encoding="utf-8") as f:
         json.dump({"info": info, "events": events}, f)
     return info

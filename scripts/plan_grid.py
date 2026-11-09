@@ -108,11 +108,14 @@ def _plan(cfg, ts=1.0):
                 [(2, k) for k in range(cuts[2], 0, -1)]
         # Visible blade passes: one per cut while it stays readable, then each pass stands for
         # a group of neighbouring cuts (they appear while the blade crosses the object).
-        min_slot = max(8, int(0.36 * fps))
+        # adaptive pace: readable at first, accelerating towards a rhythmic finish
+        prog = (li / max(1, len(cfg["cuts_sequence"]) - 1)) ** 0.8
+        slot_s = cfg["knife_slot_start"] + (cfg["knife_slot_end"] - cfg["knife_slot_start"]) * prog
+        min_slot = max(7, int(round(slot_s * fps * 0.9)))
         n_cuts = max(1, len(order))
         readable = n_cuts <= 20   # every cut gets its own, unhurried blade pass
         if readable:
-            min_slot = max(min_slot, int(0.4 * fps))
+            min_slot = max(min_slot, int(round(slot_s * fps)))
         visible = n_cuts if readable else min(n_cuts, max(1, dur // min_slot))
         yaw = yaws[li % 4] if levitate else 0.0
         pose = KT.Pose(yaw, centre, height / 2)
@@ -151,6 +154,8 @@ def _plan(cfg, ts=1.0):
             p1, q1 = KT.ready_pose(st)
             fly = KT.transit_frames(prev_ready[0], prev_ready[1], p1, q1, centre, safe_r) if prev_ready else 0
             body = max(min_slot, KT.body_frames(st))
+            if (li == 0 and not needs) or (li == len(cfg["cuts_sequence"]) - 1 and len(needs) == len(planned) - 1):
+                body = int(round(body * cfg["knife_emphasis"]))   # key passes get a beat of weight
             needs.append((fly, body))
             prev_ready = (p1, q1)
         # readable levels take exactly the time their passes need: a brisk, steady blade

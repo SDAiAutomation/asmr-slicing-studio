@@ -19,6 +19,7 @@ import numpy as np
 from mathutils import Vector
 
 import blender_build as B
+import fall_sim
 from common import MATERIALS, OBJECTS, grid_occupancy
 
 
@@ -394,23 +395,17 @@ def cube_mat(M, steak):
     return mat
 
 
-def collapse_group(mat):
+def collapse_group(mat, curve_pts, squash):
+    """Instances each cube; every point follows its own precomputed fall (see fall_sim)."""
     ng = bpy.data.node_groups.new("CubeCollapse", "GeometryNodeTree")
     I = ng.interface
     I.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
     I.new_socket(name="Collapse", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="CubeSize", in_out="INPUT", socket_type="NodeSocketVector")
     I.new_socket(name="Height", in_out="INPUT", socket_type="NodeSocketFloat")
-    I.new_socket(name="Drop", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
     N, L = ng.nodes, ng.links
     gi, go = N.new("NodeGroupInput"), N.new("NodeGroupOutput")
-    pos = N.new("GeometryNodeInputPosition")
-    sep = N.new("ShaderNodeSeparateXYZ")
-    L.new(pos.outputs[0], sep.inputs[0])
-    rnd = N.new("FunctionNodeRandomValue")
-    rnd.data_type = "FLOAT"
-    rv = [o for o in rnd.outputs if o.enabled and o.type == "VALUE"][0]
 
     def m(op, a, b=None, c=None):
         n = N.new("ShaderNodeMath")
@@ -424,50 +419,42 @@ def collapse_group(mat):
                 L.new(x, n.inputs[i])
         return n.outputs[0]
 
-    col, H = gi.outputs["Collapse"], gi.outputs["Height"]
-    rel = m("DIVIDE", sep.outputs["Z"], m("MAXIMUM", H, 1e-4))
-    # each cube lets go at its own moment: lower ones first, with some randomness
-    rnd2 = N.new("FunctionNodeRandomValue")
-    rnd2.data_type = "FLOAT"
-    rnd2.inputs["Seed"].default_value = 17
-    rv2 = [o for o in rnd2.outputs if o.enabled and o.type == "VALUE"][0]
-    delay = m("ADD", m("MULTIPLY", rel, 0.14), m("MULTIPLY", rv2, 0.2))
-    local = m("DIVIDE", m("MAXIMUM", m("SUBTRACT", col, delay), 0.0), m("SUBTRACT", 1.0, delay))
-    # free fall (accelerating), a hard landing, then a small damped rebound
-    fall = N.new("ShaderNodeFloatCurve")
-    L.new(local, fall.inputs["Value"])
-    curve = fall.mapping.curves[0]
-    pts = [(0.0, 0.0), (0.2, 0.09), (0.4, 0.37), (0.55, 0.69), (0.66, 1.0), (0.76, 0.94), (0.86, 1.0), (0.93, 0.985), (1.0, 1.0)]
-    while len(curve.points) < len(pts):
-        curve.points.new(0.5, 0.5)
-    for p, (x, y) in zip(curve.points, pts):
-        p.location = (x, y)
-    for i in (4, 6, 8):
-        curve.points[i].handle_type = "VECTOR"
-    fall.mapping.update()
-    fv = fall.outputs[0]
-    # cubes sink towards the board (pile keeps ~25-30 % of its height), plus any height to fall
-    dz = m("MULTIPLY", m("MULTIPLY", fv, -1.0),
-           m("ADD", m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.22, 0.62)), gi.outputs["Drop"]))
-    # ...and the upper ones slide outwards
-    # outward expansion proportional to the distance from the centre (pile widens ~10-25 %)
-    spread = m("MULTIPLY", fv, m("MULTIPLY", m("ADD", rel, 0.3), m("MULTIPLY_ADD", rv, 0.18, 0.06)))
-    xy = N.new("ShaderNodeCombineXYZ")
-    L.new(sep.outputs["X"], xy.inputs[0])
-    L.new(sep.outputs["Y"], xy.inputs[1])
-    sc = N.new("ShaderNodeVectorMath")
-    sc.operation = "SCALE"
-    L.new(xy.outputs[0], sc.inputs[0])
-    L.new(spread, sc.inputs["Scale"])
-    vz = N.new("ShaderNodeCombineXYZ")
-    L.new(dz, vz.inputs[2])
-    add = N.new("ShaderNodeVectorMath")
-    add.operation = "ADD"
-    L.new(sc.outputs[0], add.inputs[0])
-    L.new(vz.outputs[0], add.inputs[1])
+    def attr(name, kind):
+        n = N.new("GeometryNodeInputNamedAttribute")
+        n.data_type = kind
+        n.inputs["Name"].default_value = name
+        return [o for o in n.outputs if o.enabled and o.name == "Attribute"][0]
+
+    def curve_node(value, pts, kinks=()):
+        n = N.new("ShaderNodeFloatCurve")
+        L.new(value, n.inputs["Value"])
+        c = n.mapping.curves[0]
+        while len(c.points) < len(pts):
+            c.points.new(0.5, 0.5)
+        for p, xy in zip(c.points, pts):
+            p.location = xy
+        for i in kinks:
+            c.points[i].handle_type = "VECTOR"
+        n.mapping.update()
+        return n.outputs[0]
+
+    col = gi.outputs["Collapse"]
+    delay, span = attr("fall_delay", "FLOAT"), attr("fall_span", "FLOAT")
+    local = m("MINIMUM", m("MAXIMUM", m("DIVIDE", m("SUBTRACT", col, delay), m("MAXIMUM", span, 0.01)), 0.0), 1.0)
+    fv = curve_node(local, curve_pts, (4, 6, 8))
+    # move from the cut position to the settled one
+    pos = N.new("GeometryNodeInputPosition")
+    d = N.new("ShaderNodeVectorMath")
+    d.operation = "SUBTRACT"
+    L.new(attr("fall_target", "FLOAT_VECTOR"), d.inputs[0])
+    L.new(pos.outputs[0], d.inputs[1])
+    off = N.new("ShaderNodeVectorMath")
+    off.operation = "SCALE"
+    L.new(d.outputs[0], off.inputs[0])
+    L.new(fv, off.inputs["Scale"])
     sp = N.new("GeometryNodeSetPosition")
     L.new(gi.outputs["Geometry"], sp.inputs["Geometry"])
-    L.new(add.outputs[0], sp.inputs["Offset"])
+    L.new(off.outputs[0], sp.inputs["Offset"])
     cube = N.new("GeometryNodeMeshCube")
     sz = N.new("ShaderNodeVectorMath")
     sz.operation = "SCALE"
@@ -480,15 +467,25 @@ def collapse_group(mat):
     iop = N.new("GeometryNodeInstanceOnPoints")
     L.new(sp.outputs["Geometry"], iop.inputs["Points"])
     L.new(sm.outputs["Geometry"], iop.inputs["Instance"])
+    # impact: a brief flattening whose strength depends on the material; crumbs are scaled down
+    pulse = curve_node(local, [(0.0, 0.0), (0.55, 0.0), (0.66, 1.0), (0.85, 0.2), (1.0, 0.0)], (2,))
+    sq = m("MULTIPLY", pulse, squash)
+    ps = attr("fall_scale", "FLOAT")
+    sv = N.new("ShaderNodeCombineXYZ")
+    wide = m("MULTIPLY", ps, m("ADD", 1.0, m("MULTIPLY", sq, 0.5)))
+    L.new(wide, sv.inputs[0])
+    L.new(wide, sv.inputs[1])
+    L.new(m("MULTIPLY", ps, m("SUBTRACT", 1.0, sq)), sv.inputs[2])
+    L.new(sv.outputs[0], iop.inputs["Scale"])
     # pieces tumble while they fall and stay turned where they land
     spin = N.new("FunctionNodeRandomValue")
     spin.data_type = "FLOAT_VECTOR"
     inv = [i for i in spin.inputs if i.enabled and i.type == "VECTOR"]
-    inv[0].default_value, inv[1].default_value = (-1.3, -1.3, -1.3), (1.3, 1.3, 1.3)
+    inv[0].default_value, inv[1].default_value = (-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)
     spun = N.new("ShaderNodeVectorMath")
     spun.operation = "SCALE"
     L.new([o for o in spin.outputs if o.enabled and o.type == "VECTOR"][0], spun.inputs[0])
-    L.new(fv, spun.inputs["Scale"])
+    L.new(m("MULTIPLY", fv, attr("fall_spin", "FLOAT")), spun.inputs["Scale"])
     L.new(spun.outputs[0], iop.inputs["Rotation"])
     L.new(iop.outputs["Instances"], go.inputs["Geometry"])
     ids = {it.name: it.identifier for it in I.items_tree
@@ -540,7 +537,7 @@ def display_subset(co, kinds, surf, budget, seed):
     return co[keep], kinds[keep]
 
 
-def cubes_object(name, co, kinds, ng, ids, size, height, mat):
+def cubes_object(name, co, kinds, fall, ng, ids, size, height, mat):
     me = bpy.data.meshes.new(name)
     me.vertices.add(len(co))
     me.vertices.foreach_set("co", co.ravel())
@@ -548,6 +545,11 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
     att.data.foreach_set("value", kinds)
     org = me.attributes.new("orig", "FLOAT_VECTOR", "POINT")  # original position -> shading
     org.data.foreach_set("vector", co.ravel())
+    for key, typ, vals in (("fall_target", "FLOAT_VECTOR", fall["target"].ravel()), ("fall_delay", "FLOAT", fall["delay"]),
+                           ("fall_span", "FLOAT", fall["span"]), ("fall_spin", "FLOAT", fall["spin"]),
+                           ("fall_scale", "FLOAT", fall["scale"])):
+        a = me.attributes.new(key, typ, "POINT")
+        a.data.foreach_set("vector" if typ == "FLOAT_VECTOR" else "value", vals)
     me.update()
     ob = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(ob)
@@ -556,7 +558,6 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
     mod[ids["CubeSize"]] = list(size)
     mod[ids["Height"]] = float(height)
     mod[ids["Collapse"]] = 0.0
-    mod[ids["Drop"]] = 0.0
     me.materials.append(mat)
     return ob, mod
 
@@ -594,7 +595,8 @@ def build_grid_scene(plan, out_dir):
         me.materials.append(mt)
 
     cmat = cube_mat(M, steak)
-    ng, ids = collapse_group(cmat)
+    FP = fall_sim.params(cfg["material_profile"])
+    ng, ids = collapse_group(cmat, fall_sim.fall_curve(FP["bounce"]), FP["squash"])
     knife = B.build_knife()
     kmat = bpy.data.materials["Steel"]
     lift = 0.0
@@ -684,7 +686,12 @@ def build_grid_scene(plan, out_dir):
             report["failures"].append({"level": li, "planned": lvl["cubes"], "built": int(len(co))})
         built = int(len(co))
         co, kinds = display_subset(co, kinds, surf, int(cfg.get("display_cubes_max", 1200000)), li)
-        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
+        shown = int(len(co))
+        floor_z = -lift if levitate else 0.0
+        fall = fall_sim.simulate(co, cell, floor_z, cfg["material_profile"], cfg["random_seed"] + li)
+        if fall_sim.params(cfg["material_profile"])["crumbs"] and shown <= 200000:
+            co, kinds, fall = fall_sim.add_crumbs(co, kinds, fall, cell, floor_z, cfg["random_seed"] + li)
+        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, fall, ng, ids, cell, height, cmat)
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
         B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
@@ -700,9 +707,8 @@ def build_grid_scene(plan, out_dir):
         B.interp("BEZIER")
         rest_z = 0.0
         if levitate:
-            # the cubes stay parented at flight height and each one falls the lift on its own
+            # the cubes stay at flight height and each one falls the lift on its own
             rest_z = lift
-            mod[ids["Drop"]] = float(lift)
             cob.rotation_euler = (0.0, 0.0, lvl["yaw"])
             cob.scale = (1, 1, 1)
             cob.keyframe_insert("scale", frame=lvl["collapse_start"])
@@ -716,7 +722,7 @@ def build_grid_scene(plan, out_dir):
         cob.location = (-0.6, 0, rest_z)
         cob.keyframe_insert("location", frame=lvl["end_frame"])
         report["levels"].append({"level": li, "cuts": lvl["cuts"], "cubes_planned": lvl["cubes"],
-                                 "cubes_built": built, "cubes_displayed": int(len(co))})
+                                 "cubes_built": built, "cubes_displayed": shown})
 
     # loop: intact object returns to the opening pose, counters back to their opening values
     if plan["levels"]:

@@ -197,8 +197,8 @@ def retract_frames(st):
 
 
 def body_frames(st):
-    """Frames a stroke needs: retract under VMAX + 1 of separation + at least 6 to cut."""
-    return retract_frames(st) + 1 + 6
+    """Frames a stroke needs: retract under VMAX + 1 of separation + at least 5 to cut."""
+    return retract_frames(st) + 1 + 5
 
 
 def transit_frames(p0, q0, p1, q1, centre, safe_r):
