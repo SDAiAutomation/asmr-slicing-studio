@@ -9,7 +9,7 @@
 html,body{margin:0;background:#000}canvas{display:block}
 </style></head>
 <body>
-<canvas id="gl" width="720" height="1280"></canvas>
+<canvas id="gl" width="1080" height="1920"></canvas>
 <canvas id="out" width="1080" height="1920"></canvas>
 <script id="fs" type="x-shader/x-fragment">
 precision highp float;
@@ -22,49 +22,79 @@ uniform vec3 ctype;        // curve type per lane: 0 line, 1 cycloid, 2 steep
 uniform vec3 bpos0, bpos1, bpos2;
 uniform vec3 bang;         // rolling angle per ball
 uniform float showBalls;
+uniform vec4 tops0, tops1, tops2;   // post heights per lane (-1 = no post)
 
-const float BR=0.055;      // ball radius
-const float LW=0.115;      // lane half width
+const float BR=0.075;      // ball radius
+const float RR=0.011;      // rail radius
+const float RS=0.045;      // half spacing between the two rails of a lane
 float sdRoundBox(vec3 p, vec3 b, float r){ vec3 q=abs(p)-b; return length(max(q,0.0))+min(max(q.x,max(q.y,q.z)),0.0)-r; }
+float sdCylY(vec3 p, float h, float r){ vec2 d=abs(vec2(length(p.xz),p.y))-vec2(r,h); return min(max(d.x,d.y),0.0)+length(max(d,0.0)); }
 float hash3(vec3 p){ return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453); }
 vec2 opU(vec2 a, vec2 b){ return a.x<b.x?a:b; }
 
-// height and slope of a lane at x
-vec2 curveY(float k, float x){
-  float xa=geo.x, ya=geo.y, xb=geo.z, yb=geo.w, DX=xb-xa, DY=ya-yb;
-  float u=clamp((x-xa)/DX,0.0,1.0);
-  if(k<0.5) return vec2(ya-DY*u, -DY/DX);
-  if(k<1.5){
-    float Rc=cyc.x, d=max(x-xa,0.0);
-    float th=clamp(pow(6.0*d/Rc,1.0/3.0),0.0,cyc.y);
-    for(int i=0;i<6;i++){ float f=Rc*(th-sin(th))-d; float fp=Rc*(1.0-cos(th))+1e-4; th=clamp(th-f/fp,0.0,cyc.y); }
-    return vec2(ya-Rc*(1.0-cos(th)), -sin(th)/max(1.0-cos(th),1e-3));
+// lane centre line, parametric: u in [0,1] from A to B
+vec2 P(float k, float u){
+  float xa=geo.x, ya=geo.y, DX=geo.z-geo.x, DY=geo.y-geo.w;
+  if(k<0.5) return vec2(xa+DX*u, ya-DY*u);
+  if(k<1.5){ float th=cyc.y*u; return vec2(xa+cyc.x*(th-sin(th)), ya-cyc.x*(1.0-cos(th))); }
+  float w=min(u/0.15,1.0); return vec2(xa+DX*u, ya-DY*(1.0-(1.0-w)*(1.0-w)));
+}
+vec2 dP(float k, float u){
+  float DX=geo.z-geo.x, DY=geo.y-geo.w;
+  if(k<0.5) return vec2(DX,-DY);
+  if(k<1.5){ float th=cyc.y*u; return cyc.y*cyc.x*vec2(1.0-cos(th), -sin(th)); }
+  float w=u/0.15; return u<0.15 ? vec2(DX, -DY*2.0*(1.0-w)/0.15) : vec2(DX,0.0);
+}
+// exact-ish distance in the xy plane from q to the lane centre line (two Gauss-Newton starts)
+float curveDist(float k, vec2 q){
+  float xa=geo.x, ya=geo.y, DX=geo.z-geo.x, DY=geo.y-geo.w;
+  float u1=clamp((q.x-xa)/DX,0.0,1.0), u2=u1;
+  if(k>0.5&&k<1.5){ float c=clamp(1.0-(ya-q.y)/cyc.x,-1.0,1.0); u2=clamp(acos(c)/cyc.y,0.0,1.0); }
+  if(k>1.5){ float h=clamp((ya-q.y)/DY,0.0,1.0); u2=0.15*(1.0-sqrt(1.0-h)); }
+  float best=1e5;
+  for(int s=0;s<2;s++){
+    float u=s==0?u1:u2;
+    for(int i=0;i<4;i++){ vec2 d=P(k,u)-q, t=dP(k,u); u=clamp(u-dot(d,t)/max(dot(t,t),1e-6),0.0,1.0); }
+    best=min(best,length(P(k,u)-q));
   }
-  float c=0.15, w=clamp(u/c,0.0,1.0);
-  return vec2(ya-DY*(1.0-(1.0-w)*(1.0-w)), -DY*2.0*(1.0-w)/(c*DX)*step(u,c));
+  return best;
+}
+float railY(float k, float x){                    // height of the rail at x (for posts)
+  float u=clamp((x-geo.x)/(geo.z-geo.x),0.0,1.0);
+  if(k>0.5&&k<1.5){ float d=max(x-geo.x,0.0), th=clamp(pow(6.0*d/cyc.x,1.0/3.0),0.0,cyc.y);
+    for(int i=0;i<5;i++){ float f=cyc.x*(th-sin(th))-d; th=clamp(th-f/(cyc.x*(1.0-cos(th))+1e-4),0.0,cyc.y); }
+    return geo.y-cyc.x*(1.0-cos(th)); }
+  return P(k,u).y;
+}
+vec2 lane(vec3 p, float k, float z0, vec4 tops){
+  float dz=abs(p.z-z0)-RS;
+  if(abs(dz)>0.1) return vec2(abs(dz)-RR-0.008,0.0);           // true lower bound, never a surface
+  vec2 res=vec2(length(vec2(curveDist(k,p.xy),dz))-RR,4.0);    // twin chrome rails
+  // slim posts with a T tie, at fixed x stations; tops precomputed in JS (exact SDF, no tricks)
+  for(int i=0;i<4;i++){
+    float yr=i==0?tops.x:(i==1?tops.y:(i==2?tops.z:tops.w));
+    if(yr<0.0) continue;
+    float xi=geo.x+0.25+0.42*float(i);
+    float post=sdCylY(p-vec3(xi,(yr-RR-0.012)*0.5,z0),(yr-RR-0.012)*0.5,0.007);
+    post=min(post,sdRoundBox(p-vec3(xi,yr-RR-0.012,z0),vec3(0.006,0.006,RS),0.003));
+    res=opU(res,vec2(post,3.0));
+  }
+  return res;
 }
 
-vec2 lane(vec3 p, float k, float z0, float id){
-  vec2 c=curveY(k,p.x);
-  float kk=1.0/sqrt(1.0+min(c.y*c.y,64.0));
-  float dx=max(p.x-geo.z-0.06, geo.x-p.x-0.02);
-  float plank=max(max(max(p.y-c.x,c.x-0.045-p.y)*kk, abs(p.z-z0)-LW), dx);
-  float lip=max(max(max(p.y-c.x-0.035,c.x-0.045-p.y)*kk, abs(abs(p.z-z0)-LW)-0.012), dx);
-  return opU(vec2(plank,10.0+id),vec2(lip,4.0));
-}
-
-vec2 map(vec3 p){
+vec2 mapX(vec3 p, bool lanes){
   vec2 res=vec2(p.y,1.0);
-  res=opU(res,vec2(sdRoundBox(p-vec3(0,0.15,0),vec3(1.15,0.12,0.7),0.03),2.0));
-  float ya=geo.y;
-  // start tower and finish block
-  res=opU(res,vec2(sdRoundBox(p-vec3(geo.x-0.1,(ya+0.3)*0.5,0),vec3(0.07,(ya-0.3)*0.5,0.56),0.01),5.0));
-  res=opU(res,vec2(sdRoundBox(p-vec3(geo.z+0.12,(geo.w+0.3)*0.5+0.02,0),vec3(0.05,(geo.w-0.3)*0.5+0.04,0.56),0.01),6.0));
-  // lane supports
-  for(int i=0;i<3;i++){
-    float z0=(float(i)-1.0)*0.36, k=i==0?ctype.x:(i==1?ctype.y:ctype.z);
-    if(abs(p.z-z0)<0.4) res=opU(res,lane(p,k,z0,float(i)));
-  }
+  float xa=geo.x, ya=geo.y, xb=geo.z, yb=geo.w;
+  // start tower: white column with a yellow band, finish stops with a checker top
+  res=opU(res,vec2(sdRoundBox(p-vec3(xa-0.11,(ya+0.08)*0.5,0),vec3(0.05,(ya+0.08)*0.5,0.56),0.02),5.0));
+  res=opU(res,vec2(sdRoundBox(p-vec3(xb+0.105,(yb+0.09)*0.5,0),vec3(0.03,(yb+0.09)*0.5,0.56),0.015),6.0));
+  float bx=max(xa-0.3-p.x,p.x-xb-0.3);
+  if(!lanes){} else if(bx<0.0){
+    for(int i=0;i<3;i++){
+      float z0=(float(i)-1.0)*0.36, k=i==0?ctype.x:(i==1?ctype.y:ctype.z);
+      vec2 l=lane(p,k,z0,i==0?tops0:(i==1?tops1:tops2)); if(l.x<res.x) res=l;
+    }
+  } else res=opU(res,vec2(bx+0.01,0.0));
   if(showBalls>0.5){
     res=opU(res,vec2(length(p-bpos0)-BR,20.0));
     res=opU(res,vec2(length(p-bpos1)-BR,21.0));
@@ -73,26 +103,28 @@ vec2 map(vec3 p){
   return res;
 }
 
+vec2 map(vec3 p){ return mapX(p,true); }
+vec2 mapS(vec3 p){ return mapX(p,false); }   // shadows/AO: thin rails and posts left out (no banding)
 vec3 calcNormal(vec3 p){
   vec2 e=vec2(0.0007,-0.0007);
   return normalize(e.xyy*map(p+e.xyy).x+e.yyx*map(p+e.yyx).x+e.yxy*map(p+e.yxy).x+e.xxx*map(p+e.xxx).x);
 }
 float softShadow(vec3 ro, vec3 rd){
   float res=1.0, t=0.02;
-  for(int i=0;i<40;i++){ float h=map(ro+rd*t).x; res=min(res,9.0*h/t); t+=clamp(h,0.015,0.25); if(res<0.002||t>6.0) break; }
+  for(int i=0;i<40;i++){ float h=mapS(ro+rd*t).x; res=min(res,9.0*h/t); t+=clamp(h,0.015,0.25); if(res<0.002||t>6.0) break; }
   return clamp(res,0.0,1.0);
 }
 float calcAO(vec3 p, vec3 n){
   float occ=0.0, sca=1.0;
-  for(int i=0;i<4;i++){ float h=0.015+0.09*float(i); occ+=(h-map(p+n*h).x)*sca; sca*=0.8; }
+  for(int i=0;i<4;i++){ float h=0.015+0.09*float(i); occ+=(h-mapS(p+n*h).x)*sca; sca*=0.8; }
   return clamp(1.0-2.2*occ,0.0,1.0);
 }
 vec3 bg(vec2 uv){ return mix(vec3(0.90,0.92,0.93),vec3(0.80,0.85,0.88),smoothstep(-1.0,1.0,uv.y)); }
 vec3 env(vec3 r){ float k=r.y*0.5+0.5; return mix(vec3(0.55,0.57,0.60),vec3(0.97,0.98,1.0),smoothstep(0.35,0.75,k)); }
 vec3 laneCol(float i){ return i<0.5?vec3(0.88,0.20,0.25):(i<1.5?vec3(0.98,0.74,0.10):vec3(0.16,0.45,0.85)); }
 
-void main(){
-  vec2 uv=(2.0*gl_FragCoord.xy-R)/R.y;
+vec3 shade(vec2 fc){
+  vec2 uv=(2.0*fc-R)/R.y;
   vec3 ta=vec3(0.0,camTY,0.0);
   vec3 ro=ta+vec3(sin(camAng)*camDist,camH,cos(camAng)*camDist);
   ro.xy+=shake; ta.xy+=shake*0.6;
@@ -100,7 +132,7 @@ void main(){
   vec3 rd=normalize(uv.x*uu+uv.y*vv+2.35*ww);
   vec3 sky=bg(uv), col=sky;
   float t=0.0; vec2 h=vec2(0.0); bool hit=false;
-  for(int i=0;i<160;i++){ h=map(ro+rd*t); if(h.x<0.0006*t){hit=true;break;} t+=h.x*0.9; if(t>30.0) break; }
+  for(int i=0;i<200;i++){ h=map(ro+rd*t); if(h.x<0.0003*t){hit=true;break;} t+=h.x*0.85; if(t>30.0) break; }
   if(hit){
     vec3 p=ro+rd*t, n=calcNormal(p);
     vec3 sun=normalize(vec3(-0.5,0.95,0.6));
@@ -110,24 +142,16 @@ void main(){
     if(m<1.5){ col=sky*mix(0.70,1.0,sh)*mix(0.82,1.0,ao); }
     else {
       vec3 alb=vec3(0.8); float sp=0.2, gl=16.0, refl=0.0;
-      if(m<2.5){ alb=vec3(0.86,0.86,0.84)*(0.96+0.04*hash3(floor(p*90.0))); sp=0.05; }
-      else if(m<4.5){ alb=vec3(0.75,0.76,0.78); sp=1.0; gl=90.0; refl=0.6; }
-      else if(m<5.5){ alb=vec3(0.98,0.74,0.10); if(abs(n.z)>0.6||abs(n.x)>0.6) alb=mix(alb,vec3(0.07),step(0.5,fract((p.z+p.y)*3.2))); sp=0.35; gl=30.0; }
-      else if(m<6.5){ alb=mix(vec3(0.95),vec3(0.08),step(0.5,fract(floor(p.y*14.0)*0.5+floor(p.z*14.0)*0.5))); sp=0.3; }
-      else if(m<15.0){                                   // lane: light top with a coloured centre stripe
-        float id=m-10.0;
-        alb=vec3(0.93,0.93,0.91);
-        float zc=abs(p.z-(id-1.0)*0.36);
-        if(zc<0.035) alb=mix(alb,laneCol(id),0.85);
-        if(p.x>geo.z-0.06) alb=mix(vec3(0.95),vec3(0.08),step(0.5,fract(floor(p.x*28.0)*0.5+floor(p.z*28.0)*0.5)));
-        sp=0.25; gl=30.0;
-      }
-      else {                                              // balls: glossy, with a white band that shows rolling
+      if(m<3.5){ alb=vec3(0.80,0.81,0.83); sp=1.0; gl=80.0; refl=0.55; }                 // posts, ties
+      else if(m<4.5){ alb=vec3(0.86,0.87,0.89); sp=1.6; gl=160.0; refl=0.85; }           // polished rails
+      else if(m<5.5){ alb=vec3(0.95,0.95,0.94); if(p.y>geo.y-0.06&&p.y<geo.y+0.0) alb=vec3(0.98,0.74,0.10); sp=0.3; gl=40.0; }
+      else if(m<6.5){ alb=vec3(0.95,0.95,0.94); if(n.y>0.6||n.x>0.6) alb=mix(vec3(0.96),vec3(0.07),step(0.5,fract(floor(p.y*30.0)*0.5+floor(p.z*30.0)*0.5+floor(p.x*30.0)*0.5))); sp=0.3; gl=40.0; }
+      else {                                              // balls: glossy lacquer with a white band that shows rolling
         float id=m-20.0; vec3 c=id<0.5?bpos0:(id<1.5?bpos1:bpos2);
         float a=id<0.5?bang.x:(id<1.5?bang.y:bang.z);
         vec3 q=p-c; float ca=cos(a), sa=sin(a); vec2 r=vec2(ca*q.x+sa*q.y,-sa*q.x+ca*q.y);
-        alb=laneCol(id); if(abs(r.x)<0.012) alb=vec3(0.97);
-        sp=1.4; gl=110.0; refl=0.25;
+        alb=laneCol(id); if(abs(r.x)<0.014) alb=vec3(0.97);
+        sp=1.6; gl=140.0; refl=0.3;
       }
       float amb=0.55+0.45*n.y;
       vec3 lin=1.25*dif*vec3(1.0,0.96,0.90)+0.62*amb*ao*vec3(0.88,0.92,0.98)+0.38*clamp(dot(n,normalize(vec3(0.55,0.25,0.8))),0.0,1.0)*ao;
@@ -139,7 +163,11 @@ void main(){
   }
   col=pow(clamp(col,0.0,1.0),vec3(0.95));
   col*=1.0-0.12*dot(uv*vec2(0.9,0.55),uv*vec2(0.9,0.55));
-  gl_FragColor=vec4(col,1.0);
+  return col;
+}
+void main(){
+  vec3 c=shade(gl_FragCoord.xy+vec2(-0.25,0.25))+shade(gl_FragCoord.xy+vec2(0.25,-0.25));
+  gl_FragColor=vec4(c*0.5,1.0);
 }
 </script>
 <script>
@@ -147,7 +175,7 @@ const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const sm=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
 const lerp=(a,b,t)=>a+(b-a)*t;
 const G=9.81*5/7;                 // rolling solid ball: a = 5/7 g along the slope
-const BR=0.055;
+const BR=0.075, BOFF=Math.sqrt((0.075+0.011)**2-0.045**2);
 const CT={line:0,cycloid:1,steep:2};
 const LANE_COL=['#E0303F','#E8A70F','#2A73D9'];
 
@@ -182,10 +210,12 @@ function posAt(sim,t){
   let lo=0,hi=tab.length-1;while(hi-lo>1){const m=(lo+hi)>>1;(tab[m].t<t)?lo=m:hi=m;}
   const a=tab[lo],b=tab[hi],k=(t-a.t)/(b.t-a.t);return {x:lerp(a.x,b.x,k),y:lerp(a.y,b.y,k),s:lerp(a.s,b.s,k)};
 }
+function railYAt(g,kind,x){let lo=0,hi=1;for(let i=0;i<50;i++){const m=(lo+hi)/2;(curvePt(g,kind,m)[0]<x)?lo=m:hi=m;}return curvePt(g,kind,(lo+hi)/2)[1];}
+function postTops(g,kind){const r=[];for(let i=0;i<4;i++){const x=g.xa+0.25+0.42*i;r.push(x<g.xb-0.02?railYAt(g,kind,x):-1);}return r;}
 function ballCenter(g,kind,p,z){              // sit the ball on the lane surface
   const e=0.002, a=curvePt(g,kind,clamp((p.x-e-g.xa)/(g.xb-g.xa),0,1)), b=curvePt(g,kind,clamp((p.x+e-g.xa)/(g.xb-g.xa),0,1));
   let nx=-(b[1]-a[1]), ny=(b[0]-a[0]);const L=Math.hypot(nx,ny)||1;nx/=L;ny/=L;
-  return [p.x+nx*BR,p.y+ny*BR,z];
+  return [p.x+nx*BOFF,p.y+ny*BOFF,z];
 }
 
 // ---------------------------------------------------------------- timeline
@@ -196,7 +226,7 @@ function buildTimeline(cfg){
   T.hook=[0,D.hook];t=D.hook;
   cfg.rounds.forEach((r,i)=>{
     const g=makeGeo(r), R={cfg:r,i,start:t,g};
-    R.lanes=r.lanes.map((l,j)=>{const u0=r.kind==='tautochrone'?(l.start||0):0;const sim=simulate(g,l.curve,u0,S);return {...l,sim,z:(j-1)*0.36};});
+    R.lanes=r.lanes.map((l,j)=>{const u0=r.kind==='tautochrone'?(l.start||0):0;const sim=simulate(g,l.curve,u0,S);return {...l,sim,z:(j-1)*0.36,h:(sim.tab[0].y-g.yb)*S};});R.Tmax=Math.max(...R.lanes.map(l=>l.sim.T));
     R.titleEnd=t+D.title;R.showEnd=R.titleEnd+D.show;
     T.events.push({type:'round',t});
     R.qStart=R.showEnd;R.qEnd=R.qStart+D.question;T.events.push({type:'question',t0:R.qStart,t1:R.qEnd});
@@ -222,14 +252,15 @@ function sceneState(T,t){
   const inExplain=t>=T.explain[0];
   const replay=t>=R.replayT0&&t<R.replayT1;
   let rt;                                           // race clock (s since release)
-  if(replay) rt=(t-R.replayT0)*SLOW-0.1; else if(t>=R.replayT1) rt=99; else rt=t-R.go;
+  if(inExplain){const per=R.Tmax+1.1;rt=((t-T.explain[0])%per)-0.35;}
+  else if(replay) rt=(t-R.replayT0)*SLOW-0.1; else if(t>=R.replayT1) rt=99; else rt=t-R.go;
   const s={R,rt,replay,g:R.g,balls:[],showBalls:1,shake:[0,0]};
   R.lanes.forEach((l,j)=>{const p=posAt(l.sim,Math.max(rt,0));s.balls.push({c:ballCenter(R.g,l.curve,p,l.z),ang:-p.s/BR,done:rt>=l.sim.T});});
   const lt=t-R.start;
-  s.camAng=0.38+0.10*Math.sin(lt*0.2)-(R.i%2?0.12:0);s.camDist=lerp(4.8,4.4,sm(0,10,lt));s.camH=1.05;s.camTY=1.08;
+  s.camAng=0.36+0.08*Math.sin(lt*0.2)-(R.i%2?0.1:0);s.camDist=lerp(4.5,4.1,sm(0,10,lt));s.camH=1.0;s.camTY=1.02;
   if(t>=R.qStart&&t<R.go) s.camDist-=0.25*sm(R.qStart,R.qEnd,t);
-  if(replay){const k=t-R.replayT0;s.camAng=0.28+0.03*k;s.camDist=3.3;s.camH=0.45;s.camTY=1.0;}
-  if(inExplain){const k=t-T.explain[0];s.camAng=0.4+0.2*Math.sin(k*0.2);s.camDist=4.6;s.camH=1.1;s.camTY=1.08;}
+  if(replay){const k=t-R.replayT0;s.camAng=0.04+0.01*k;s.camDist=5.1-0.05*k;s.camH=0.32;s.camTY=0.98;}
+  if(inExplain){const k=t-T.explain[0];s.camAng=0.06+0.05*Math.sin(k*0.3);s.camDist=5.0;s.camH=0.4;s.camTY=1.0;}
   return s;
 }
 
@@ -242,7 +273,7 @@ gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,document.getElementById('fs').textCon
 gl.linkProgram(prog);gl.useProgram(prog);
 const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
 const al=gl.getAttribLocation(prog,'a');gl.enableVertexAttribArray(al);gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
-const U={};['R','camAng','camDist','camH','camTY','shake','geo','cyc','ctype','bpos0','bpos1','bpos2','bang','showBalls'].forEach(n=>U[n]=gl.getUniformLocation(prog,n));
+const U={};['R','camAng','camDist','camH','camTY','shake','geo','cyc','ctype','bpos0','bpos1','bpos2','bang','showBalls','tops0','tops1','tops2'].forEach(n=>U[n]=gl.getUniformLocation(prog,n));
 
 // project a scene point to output pixels (same camera as the shader)
 function project(s,p){
@@ -251,7 +282,7 @@ function project(s,p){
   const nrm=a=>{const l=Math.hypot(...a);return a.map(v=>v/l);},cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
   const ww=nrm(sub(ta,ro)),uu=nrm(cross(ww,[0,1,0])),vv=cross(uu,ww),d=sub(p,ro);
   const z=dot(d,ww),ux=dot(d,uu)/z*2.35,uy=dot(d,vv)/z*2.35;
-  return [(ux*1280+720)/2*1.5,(1280-(uy*1280+1280)/2)*1.5];
+  return [(ux*1920+1080)/2,(1920-(uy*1920+1920)/2)];
 }
 
 // ---------------------------------------------------------------- overlay (clean, top band)
@@ -275,6 +306,7 @@ function overlay(cfg,T,t,s){
   ctxt(cfg.series,W/2,292,28,COL.sub,0.9);
   if(cfg.handle){c.save();c.globalAlpha=0.55;c.font='700 30px P, DJ';c.textAlign='center';c.textBaseline='middle';
     c.fillStyle='#fff';c.shadowColor='rgba(0,0,0,0.45)';c.shadowBlur=6;c.fillText(cfg.handle,W/2,1395);c.restore();}
+  trails(s);
   if(t<T.hook[1]){const a=1-fade(T.hook[1]-0.3,t,0.3),hn=cfg.hook.length;
     cfg.hook.forEach((l,i)=>ctxt(l,W/2,365+i*90,fitText(l,960,82),i===hn-1?COL.red:COL.ink,a));
     if(cfg.hook_sub) ctxt(cfg.hook_sub,W/2,365+hn*90-8,36,COL.sub,a);
@@ -315,7 +347,16 @@ function overlay(cfg,T,t,s){
 }
 function labels(s,a){                                   // lane names next to each start, in 3D
   if(a<=0)return;s.R.lanes.forEach((l,j)=>{const p=project(s,[s.g.xa-0.02,s.g.ya+0.2+(j-1)*0.0,l.z]);
-    const tp=s.balls[j].c;const q=project(s,[tp[0],tp[1]+0.16,tp[2]]);pill(l.name,q[0],q[1],26,LANE_COL[j],a);});
+    const tp=s.balls[j].c;const q=project(s,[tp[0],tp[1]+0.17,tp[2]]);pill(s.R.cfg.kind==='tautochrone'?l.name+' · '+fmt(l.h,1)+' m':l.name,q[0],q[1],26,LANE_COL[j],a);});
+}
+function trails(s){                                    // fading colour trail behind each moving ball
+  const R=s.R, rt=s.rt; if(rt<=0.02||rt>R.Tmax+0.6) return;
+  R.lanes.forEach((l,j)=>{
+    const end=Math.min(rt,l.sim.T), fadeOut=rt>l.sim.T?clamp(1-(rt-l.sim.T)/0.5,0,1):1; if(fadeOut<=0) return;
+    const pts=[];for(let k=2;k<=22;k++){const tk=end-k*0.018;if(tk<0)break;const p=posAt(l.sim,tk);pts.push(project(s,ballCenter(R.g,l.curve,p,l.z)));}
+    for(let k=1;k<pts.length;k++){const a=(1-k/pts.length)*0.75*fadeOut;c.save();c.globalAlpha=a;c.strokeStyle=LANE_COL[j];c.lineCap='round';
+      c.lineWidth=22*(1-k/pts.length)+3;c.beginPath();c.moveTo(...pts[k-1]);c.lineTo(...pts[k]);c.stroke();c.restore();}
+  });
 }
 function timers(R,s,t){
   const order=R.lanes.map((l,j)=>[l.sim.T,j]).sort((a,b)=>a[0]-b[0]).map(x=>x[1]);
@@ -340,12 +381,13 @@ window.setup=function(cfg){CFG=cfg;DEC=cfg.decimal||'.';TL=buildTimeline(cfg);
   return {duration:TL.duration,events:TL.events,rounds};};
 window.renderFrame=function(t,type='image/jpeg'){
   const s=sceneState(TL,t), g=s.g, lanes=s.R.lanes;
-  gl.viewport(0,0,720,1280);gl.uniform2f(U.R,720,1280);
+  gl.viewport(0,0,1080,1920);gl.uniform2f(U.R,1080,1920);
   gl.uniform1f(U.camAng,s.camAng);gl.uniform1f(U.camDist,s.camDist);gl.uniform1f(U.camH,s.camH);gl.uniform1f(U.camTY,s.camTY);
   gl.uniform2f(U.shake,s.shake[0],s.shake[1]);gl.uniform4f(U.geo,g.xa,g.ya,g.xb,g.yb);gl.uniform2f(U.cyc,g.R,g.thB);
   gl.uniform3f(U.ctype,CT[lanes[0].curve],CT[lanes[1].curve],CT[lanes[2].curve]);
   gl.uniform3f(U.bpos0,...s.balls[0].c);gl.uniform3f(U.bpos1,...s.balls[1].c);gl.uniform3f(U.bpos2,...s.balls[2].c);
   gl.uniform3f(U.bang,s.balls[0].ang,s.balls[1].ang,s.balls[2].ang);gl.uniform1f(U.showBalls,s.showBalls);
+  ['tops0','tops1','tops2'].forEach((n,j)=>gl.uniform4fv(U[n],new Float32Array(postTops(g,lanes[j].curve))));
   gl.drawArrays(gl.TRIANGLES,0,3);gl.finish();
   c.imageSmoothingQuality='high';c.drawImage(document.getElementById('gl'),0,0,W,H);
   overlay(CFG,TL,t,s);
