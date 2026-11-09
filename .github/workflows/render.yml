@@ -72,6 +72,29 @@ jobs:
           if raw:
               cfg = json.loads(raw)
               quality = cfg.pop("quality", "${{ inputs.quality || 'preview' }}")
+              # Daily videos get published: refuse a repeat of the last successful one.
+              # Set "allow_repeat": true in config_json for a deliberate re-render.
+              allow_repeat = cfg.pop("allow_repeat", False)
+              try:
+                  rows = [json.loads(l) for l in open("history/videos.jsonl", encoding="utf-8") if l.strip()]
+              except FileNotFoundError:
+                  rows = []
+              ok = [r for r in rows if r.get("status") == "ok"]
+              if ok and not allow_repeat:
+                  last = ok[-1]
+                  # older rows have no "format": grid runs always logged target_piece_count = 2
+                  last_format = last.get("format") or ("grid" if last.get("pieces") == 2 else "slices")
+                  fmt = cfg.get("format", "slices")
+                  seq = cfg.get("cuts_sequence") or cfg.get("progression_sequence")
+                  problems = []
+                  if cfg.get("object_type") == last.get("object"):
+                      problems.append(f"same object as last video ({last.get('object')})")
+                  if fmt == "grid" and last_format == "grid":
+                      problems.append("grid two days in a row")
+                  if seq and seq == last.get("sequence"):
+                      problems.append("same sequence as last video")
+                  if problems:
+                      raise SystemExit("Repeat refused: " + "; ".join(problems))
           else:
               seed = "${{ inputs.random_seed }}".strip()
               cfg = {
@@ -238,6 +261,8 @@ jobs:
           row = {"date": datetime.datetime.utcnow().isoformat(timespec="minutes") + "Z",
                  "run": int(os.environ["GITHUB_RUN_ID"]), "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
                  "status": "ok" if exp.get("ok") else "failed",
+                 "format": cfg.get("format", "slices"),
+                 "sequence": cfg.get("cuts_sequence") or cfg.get("progression_sequence"),
                  "object": cfg.get("object_type"), "pieces": cfg.get("target_piece_count"),
                  "mode": cfg.get("cutting_mode"), "seed": cfg.get("random_seed"),
                  "hook": cfg.get("hook_text", ""), "end_text": cfg.get("end_text", ""), "caption": cap,

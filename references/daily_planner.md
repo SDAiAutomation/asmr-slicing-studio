@@ -7,8 +7,8 @@ Chaque jour, la tâche planifiée Claude décide **une** vidéo, la lance sur Gi
 - Ce fichier (leviers, garde-fous).
 
 ## Formats
-- **`grid` (format principal, ~5 jours sur 7)** : niveaux "N CUTS -> X CUBES". Un objet neuf par niveau, des coupes en grille qui augmentent, puis effondrement en cubes. Compteurs CUTS (haut) et CUBES (bas), exacts. Clés : `format: "grid"`, `cuts_sequence` (ex. [4, 10, 25, 60, 160, 400, 1000]), objet `steak` (validé en priorité), `cake`, `mango`. Jusqu'à ~1 000 coupes (≈ 12 millions de cubes) ; durée **≥ 60 s** (TikTok ne rémunère que les vidéos de plus d'une minute) : `video_duration: 62` par défaut (posé automatiquement par le workflow), 8 à 12 niveaux pour que la minute soit remplie d'action et pas ralentie.
-- **`slices`** : découpe progressive en morceaux, compteurs CUTS et PIECES. Pour varier. Toujours en `cutting_mode: "levels"` : chaque niveau repart de l'objet intact (c'est la règle des formats qui marchent), `progression_sequence` = nombre de morceaux par niveau (ex. [2, 5, 15, 50, 200, 1000]).
+- **`grid` (un jour sur deux au plus, jamais deux jours de suite)** : niveaux "N CUTS -> X CUBES". Un objet neuf par niveau, des coupes en grille qui augmentent, puis effondrement en cubes. Compteurs CUTS (haut) et CUBES (bas), exacts. Clés : `format: "grid"`, `cuts_sequence` (ex. [4, 10, 25, 60, 160, 400, 1000]), objets `steak`, `cake`, `mango` (à faire tourner). Jusqu'à ~1 000 coupes (≈ 12 millions de cubes) ; durée **≥ 60 s** (TikTok ne rémunère que les vidéos de plus d'une minute) : `video_duration: 62` par défaut (posé automatiquement par le workflow), 8 à 12 niveaux pour que la minute soit remplie d'action et pas ralentie.
+- **`slices` (environ un jour sur deux)** : découpe progressive en morceaux, compteurs CUTS et PIECES. Toujours en `cutting_mode: "levels"` : chaque niveau repart de l'objet intact (c'est la règle des formats qui marchent), `progression_sequence` = nombre de morceaux par niveau (ex. [2, 5, 15, 50, 200, 1000]).
 - Règle commune : chaque niveau repart toujours de la forme initiale ; le compteur du haut affiche « coupes faites / coupes du niveau ».
 
 ## Ce qui nous distingue des chaînes concurrentes (à exploiter)
@@ -27,7 +27,7 @@ Chaque jour, la tâche planifiée Claude décide **une** vidéo, la lance sur Gi
 6. **Débat** : end_text "Mango or soap next?" → choix binaire, facile à commenter.
 
 Règles :
-- Alterner : ne pas répéter le même angle 2 jours de suite, ni le même nombre de morceaux.
+- Chaque vidéo est publiée, donc aucune répétition : jamais le même objet que la vidéo précédente (et si possible aucun des 3 derniers), jamais `grid` deux jours de suite, ni le même angle, ni la même séquence, ni le même nombre de morceaux. Le workflow refuse une répétition de la dernière vidéo réussie (`"allow_repeat": true` dans `config_json` pour un nouveau rendu volontaire).
 - Au moins 1 vidéo ≥ 5 000 morceaux par semaine, au plus 2 (rendu long).
 - Si `views`/`comments` sont renseignés, privilégier les angles des 3 meilleures vidéos (70 %) et garder 30 % d'exploration.
 - Textes à l'écran **en anglais**, courts (≤ 6 mots pour le hook), **sans emoji** (la police Blender ne les affiche pas). Les emojis sont permis dans la légende.
@@ -38,7 +38,7 @@ Règles :
 - Au-delà de ~100 000 cubes, la pile finale devient une texture (on ne voit plus les cubes) : c'est le compteur qui porte le « waouh », garder 1 à 2 niveaux où les cubes restent visibles (≤ 5 000).
 
 ## Garde-fous techniques
-- Objets : `steak` = objet phare du format grid ; `mango` validé en slices. `soap`, `jelly`, `chocolate` existent mais ne sont pas encore validés à l'œil : au plus 1 essai par semaine, et seulement après une vidéo mango réussie la veille.
+- Objets : `steak`, `cake`, `mango` en grid ; `mango` validé en slices. `soap`, `jelly`, `chocolate` existent mais ne sont pas encore validés à l'œil : au plus 1 essai par semaine, et seulement après une vidéo mango réussie la veille.
 - `target_piece_count` ≤ 25 000. Au-delà de 5 000, `quality: preview` (le rendu CPU dépasse sinon les 5 h de GitHub).
 - Si la dernière ligne de l'historique est `failed`, refaire une config sûre (mango, ≤ 400, preview) avant de reprendre les gros nombres.
 - `random_seed` = date du jour au format AAAAMMJJ.
