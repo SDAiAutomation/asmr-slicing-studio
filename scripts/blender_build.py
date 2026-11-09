@@ -918,6 +918,17 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
         text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
         _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, ink)  # dark ink: this counter sits on the light board
         text_obj("PiecesWord", cfg["label_pieces"], hh * 0.05, (0, -hh * 0.48, -D), cam, accent)
+        # dark plate: the label sits on the dark table in wide shots but on the light board when
+        # the camera pushes in, and must stay readable on both
+        pm = bpy.data.meshes.new("LabelPlate")
+        pm.from_pydata([(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)], [], [(0, 1, 2, 3)])
+        pm.materials.append(simple_mat("LabelPlate", (0.02, 0.02, 0.022), 1.0, 0.0, emit=(0.02, 0.02, 0.022)))
+        plate = bpy.data.objects.new("LabelPlate", pm)
+        scn_plate = bpy.context.scene.collection
+        scn_plate.objects.link(plate)
+        plate.parent = cam
+        plate.location = (0, -hh * 0.463, -D * 1.003)
+        plate.scale = (hh * 0.12, hh * 0.037, 1)
     if cfg.get("hook_text"):
         ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.31, -D), cam, white)
         set_visibility(ob, 1, int(3.0 * fps))
