@@ -328,14 +328,14 @@ def add_seams(mat, P, nodes_out, colour=(0.03, 0.006, 0.004, 1)):
     nodes_out.append(P)
 
 
-def cube_mat(M, steak):
-    mat, nt, bsdf = B.principled("Cubes")
+def cube_mat(M, steak, attr_src="INSTANCER"):
+    mat, nt, bsdf = B.principled("Cubes" if attr_src == "INSTANCER" else "Pieces")
     L = nt.links
     kind = nt.nodes.new("ShaderNodeAttribute")
-    kind.attribute_type, kind.attribute_name = "INSTANCER", "kind"
+    kind.attribute_type, kind.attribute_name = attr_src, "kind"
     if is_cake(M):
         orig = nt.nodes.new("ShaderNodeAttribute")
-        orig.attribute_type, orig.attribute_name = "INSTANCER", "orig"
+        orig.attribute_type, orig.attribute_name = attr_src, "orig"
         tc = nt.nodes.new("ShaderNodeTexCoord")
         add = nt.nodes.new("ShaderNodeVectorMath")
         add.operation = "ADD"
@@ -369,7 +369,7 @@ def cube_mat(M, steak):
         B.set_input(bsdf, "Roughness", 0.55)
     elif steak:
         orig = nt.nodes.new("ShaderNodeAttribute")
-        orig.attribute_type, orig.attribute_name = "INSTANCER", "orig"
+        orig.attribute_type, orig.attribute_name = attr_src, "orig"
         # shading point in the steak's original space = cube centre + local offset,
         # so a big cube shows the real marbling that runs through it (not one flat colour)
         tc = nt.nodes.new("ShaderNodeTexCoord")
@@ -493,6 +493,108 @@ def collapse_group(mat, curve_pts, squash):
     return ng, ids
 
 
+REAL_PIECES_MAX = 2500      # up to here each piece is the object's real clipped geometry
+
+
+def _clip(bm, co, no, keep_positive):
+    """Copy of bm cut by a plane, the opening capped (material slot 1 = cut face)."""
+    b = bm.copy()
+    geom = b.verts[:] + b.edges[:] + b.faces[:]
+    bmesh.ops.bisect_plane(b, geom=geom, dist=1e-7, plane_co=co, plane_no=no,
+                           clear_inner=keep_positive, clear_outer=not keep_positive)
+    boundary = [e for e in b.edges if e.is_boundary]
+    if boundary:
+        for f in bmesh.ops.holes_fill(b, edges=boundary, sides=0)["faces"]:
+            f.smooth = False
+    bmesh.ops.recalc_face_normals(b, faces=b.faces[:])
+    return b
+
+
+def real_cells(me, lvl):
+    """{(i, j, k): bmesh} of the mesh clipped by the planned grid; recursion per axis."""
+    lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
+    src = bmesh.new()
+    src.from_mesh(me)
+    out = {}
+
+    def split(bm, axis, prefix):
+        if axis == 3:
+            if bm.faces:
+                out[prefix] = bm
+            else:
+                bm.free()
+            return
+        no = [0.0, 0.0, 0.0]
+        no[axis] = 1.0
+        cur = bm
+        for k in range(n[axis]):
+            if k == n[axis] - 1:
+                split(cur, axis + 1, prefix + (k,))
+                break
+            co = [0.0, 0.0, 0.0]
+            co[axis] = float(lo[axis] + ext[axis] * (k + 1) / n[axis])
+            split(_clip(cur, co, no, False), axis + 1, prefix + (k,))
+            nxt = _clip(cur, co, no, True)
+            cur.free()
+            cur = nxt
+
+    split(src, 0, ())
+    return out
+
+
+def cell_index(co, lvl):
+    lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
+    return np.clip(np.floor((co - lo) / ext * n).astype(int), 0, n - 1)
+
+
+def key_piece_fall(ob, centre, target, delay, span, spin, curve, f0, f1):
+    """Keys of one piece following its own precomputed fall (same curve as the node group)."""
+    B.interp("LINEAR")
+    for u, share in curve:
+        ob.location = tuple(centre + (target - centre) * share)
+        ob.keyframe_insert("location", frame=f0 + (delay + span * u) * (f1 - f0))
+    ob.rotation_euler = (0.0, 0.0, 0.0)
+    ob.keyframe_insert("rotation_euler", frame=f0 + delay * (f1 - f0))
+    ob.rotation_euler = tuple(spin)
+    ob.keyframe_insert("rotation_euler", frame=f0 + (delay + span * fall_sim.LAND_U) * (f1 - f0))
+
+
+def real_pile(name, me, lvl, co, kinds, fall, mat, curve, seed, show_from, hide_from):
+    """Empty parenting one object per cell, each the true clipped shape of the object."""
+    pile = bpy.data.objects.new(name, None)
+    bpy.context.scene.collection.objects.link(pile)
+    meshes = real_cells(me, lvl)
+    idx = cell_index(np.asarray(co, np.float64), lvl)
+    rng = np.random.default_rng(seed)
+    made = 0
+    for i, ijk in enumerate(map(tuple, idx.tolist())):
+        bm = meshes.pop(ijk, None)
+        if bm is None:
+            continue
+        c = np.asarray(co[i], np.float64)
+        bmesh.ops.translate(bm, verts=bm.verts[:], vec=tuple(-c))
+        for f in bm.faces:
+            f.material_index = 0
+        m = bpy.data.meshes.new(f"{name}_{i}")
+        bm.to_mesh(m)
+        bm.free()
+        m.materials.append(mat)
+        ob = bpy.data.objects.new(m.name, m)
+        bpy.context.scene.collection.objects.link(ob)
+        ob.parent = pile
+        ob["orig"] = [float(x) for x in c]
+        ob["kind"] = float(kinds[i])
+        ob.location = tuple(c)
+        B.set_visibility(ob, show_from, hide_from)
+        spin = (rng.random(3) * 2.0 - 1.0) * float(fall["spin"][i])
+        key_piece_fall(ob, c, np.asarray(fall["target"][i], np.float64), float(fall["delay"][i]), float(fall["span"][i]),
+                       spin, curve, show_from, lvl["collapse_end"])
+        made += 1
+    for bm in meshes.values():      # slivers of cells whose centre is outside the shape
+        bm.free()
+    return pile, made
+
+
 def cells(shape, lvl):
     """Occupied cell centres, their kind (0 flesh / 1 skin-fat) and a surface flag."""
     lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
@@ -595,6 +697,7 @@ def build_grid_scene(plan, out_dir):
         me.materials.append(mt)
 
     cmat = cube_mat(M, steak)
+    pmat = cube_mat(M, steak, attr_src="OBJECT")
     FP = fall_sim.params(cfg["material_profile"])
     ng, ids = collapse_group(cmat, fall_sim.fall_curve(FP["bounce"]), FP["squash"])
     knife = B.build_knife()
@@ -682,34 +785,31 @@ def build_grid_scene(plan, out_dir):
         shown = int(len(co))
         floor_z = -lift if levitate else 0.0
         fall = fall_sim.simulate(co, cell, floor_z, cfg["material_profile"], cfg["random_seed"] + li)
-        if fall_sim.params(cfg["material_profile"])["crumbs"] and shown <= 200000:
-            co, kinds, fall = fall_sim.add_crumbs(co, kinds, fall, cell, floor_z, cfg["random_seed"] + li)
-        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, fall, ng, ids, cell, height, cmat)
+        real = shown <= REAL_PIECES_MAX
+        if real:
+            cob, mod = None, None
+            cob, made = real_pile(f"Pile_{li:02d}", me, lvl, co, kinds, fall, pmat, fall_sim.fall_curve(FP["bounce"]),
+                                  cfg["random_seed"] + li, lvl["collapse_start"], lvl["end_frame"])
+            if made != built:
+                report["failures"].append({"level": li, "real_pieces": made, "planned": built})
+        else:
+            if FP["crumbs"] and shown <= 200000:
+                co, kinds, fall = fall_sim.add_crumbs(co, kinds, fall, cell, floor_z, cfg["random_seed"] + li)
+            cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, fall, ng, ids, cell, height, cmat)
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
-        B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
-        cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
-        path = f'modifiers["GN"]["{ids["Collapse"]}"]'
-        B.interp("LINEAR")   # the fall curve lives in the node group: no double easing
-        mod[ids["Collapse"]] = 0.0
-        # levitate: the pieces burst apart in the air for a beat, then drop on the board
-        drop = lvl["collapse_start"] + (int(0.2 * fps) if levitate else 0)
-        cob.keyframe_insert(data_path=path, frame=drop)
-        mod[ids["Collapse"]] = 1.0
-        cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
+        rest_z = lift if levitate else 0.0   # the pile stays at flight height, each piece falls on its own
+        cob.rotation_euler = (0.0, 0.0, lvl["yaw"]) if levitate else (0.0, 0.0, 0.0)
+        if not real:
+            B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
+            cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
+            path = f'modifiers["GN"]["{ids["Collapse"]}"]'
+            B.interp("LINEAR")   # the fall curve lives in the node group: no double easing
+            mod[ids["Collapse"]] = 0.0
+            cob.keyframe_insert(data_path=path, frame=lvl["collapse_start"])
+            mod[ids["Collapse"]] = 1.0
+            cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
         B.interp("BEZIER")
-        rest_z = 0.0
-        if levitate:
-            # the cubes stay at flight height and each one falls the lift on its own
-            rest_z = lift
-            cob.rotation_euler = (0.0, 0.0, lvl["yaw"])
-            cob.scale = (1, 1, 1)
-            cob.keyframe_insert("scale", frame=lvl["collapse_start"])
-            cob.scale = (1.08, 1.08, 1.08)
-            cob.keyframe_insert("scale", frame=drop)
-            # back to true size before the first cube can reach the board
-            cob.scale = (1, 1, 1)
-            cob.keyframe_insert("scale", frame=drop + max(1, int((lvl["collapse_end"] - drop) * 0.45)))
         cob.location = (0, 0, rest_z)
         cob.keyframe_insert("location", frame=lvl["exit_start"])
         cob.location = (-0.6, 0, rest_z)

@@ -204,8 +204,11 @@ def _plan(cfg, ts=1.0):
                     cnt = boxes_count(occ, active)
                 pieces_ev.append((int(sf), cnt, li))
                 last_eval_frame = sf
-        f_end = f + dur + 2
-        collapse = min(int(0.85 * fps), max(int(0.45 * fps), int(0.75 * fps * ts)))  # gravity does not slow down
+        if lvl_blades:     # the knife leaves the object's volume before anything falls
+            top = np.array([0.24, 0.02, lift + height + 0.30])
+            lvl_blades[-1]["park_to"] = top.tolist()
+        f_end = f + dur + 2 + int(0.35 * fps)
+        collapse = max(int(0.8 * fps), min(int(1.0 * fps), int(0.9 * fps * ts)))  # long enough to read the fall
         hold = max(int(0.35 * fps), int(0.7 * fps * ts))
         exit_f = max(int(0.3 * fps), int(0.4 * fps * ts))
         lvl = {"level": li, "cuts": int(C), "cuts_xyz": cuts.tolist(), "cells_xyz": n.tolist(),

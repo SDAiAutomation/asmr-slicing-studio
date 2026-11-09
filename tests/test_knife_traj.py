@@ -205,3 +205,11 @@ def test_slices_every_cut_is_covered_by_a_pass(slices):
 def test_slices_keeps_real_piece_progression(slices):
     assert [s["count_after"] for s in slices["strokes"]] == sorted(s["count_after"] for s in slices["strokes"])
     assert slices["strokes"][-1]["count_after"] == 32
+
+
+def test_knife_is_out_of_the_object_when_pieces_fall(p):
+    tr = np.array(p["knife_track"])
+    centre = np.array(p["object_centre"])
+    for l in p["levels"]:
+        for f in range(l["collapse_start"], l["collapse_end"]):
+            assert np.linalg.norm(tr[f - 1, :3] - centre) > 0.2

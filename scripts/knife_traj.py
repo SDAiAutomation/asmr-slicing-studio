@@ -328,21 +328,43 @@ def build_track(strokes, total_frames, centre, safe_r):
     """Per-frame pose [x, y, z, qw, qx, qy, qz] of the working knife, frames 1..total."""
     if not strokes:
         return []
+    PARK_FRAMES, PARK_RETURN = 9, 12
     track = [None] * (total_frames + 1)
     centre = np.asarray(centre, float)
     first_p, first_q = ready_pose(strokes[0])
     prev_p, prev_q, prev_end = first_p, first_q, 1
+    park = None
     for st in strokes:
         t = st["time"]
         p1, q1 = ready_pose(st)
-        for f in range(prev_end, t["ready"] + 1):
-            u = (f - prev_end) / max(1, t["ready"] - prev_end)
+        start = prev_end
+        if park is not None:   # leave the object's volume first, wait, then fly to the next pass
+            out = max(1, min(PARK_FRAMES, t["ready"] - prev_end - 1))
+            for f in range(prev_end, prev_end + out + 1):
+                u = (f - prev_end) / out
+                track[f] = (prev_p + (park - prev_p) * (u * u * (3 - 2 * u)), prev_q)
+            back = max(prev_end + out, t["ready"] - PARK_RETURN)
+            for f in range(prev_end + out, back + 1):
+                track[f] = (park, prev_q)
+            prev_p, start = park, back
+        for f in range(start, t["ready"] + 1):
+            u = (f - start) / max(1, t["ready"] - start)
             track[f] = _transit(prev_p, prev_q, p1, q1, centre, safe_r, u)
         q = np.asarray(st["q"], float)
         for f in range(t["ready"], t["retract_end"] + 1):
             track[f] = (stroke_pos(st, stroke_s(st, f)), q)
         prev_p, prev_q, prev_end = p1, q1, t["retract_end"]
+        park = np.asarray(st["park_to"], float) if st.get("park_to") else None
     # closing flight back to the first pose: the video loops without a jump
+    if park is not None:
+        out = max(1, min(PARK_FRAMES, total_frames - prev_end - 1))
+        for f in range(prev_end, prev_end + out + 1):
+            u = (f - prev_end) / out
+            track[f] = (prev_p + (park - prev_p) * (u * u * (3 - 2 * u)), prev_q)
+        back = max(prev_end + out, total_frames - PARK_RETURN)
+        for f in range(prev_end + out, back + 1):
+            track[f] = (park, prev_q)
+        prev_p, prev_end = park, back
     for f in range(prev_end, total_frames + 1):
         u = (f - prev_end) / max(1, total_frames - prev_end)
         track[f] = _transit(prev_p, prev_q, first_p, first_q, centre, safe_r, u)

@@ -107,7 +107,7 @@ def simulate(co, cell, ground_z, material, seed):
     # release: outside and top first, the inner core follows once it has room
     delay = 0.24 * (1.0 - dist / rmax) + 0.08 * (1.0 - rel) + 0.05 * rng.random(n)
     fall = np.sqrt(dz / max(float(dz.max()), 1e-6))      # free fall: time ~ sqrt(height)
-    span = np.maximum(0.2, 0.55 * fall)
+    span = np.maximum(0.35, 0.8 * fall)
     land = delay + span * LAND_U
     # contact order: within a column a piece cannot land before the one under it
     order = np.lexsort((assigned_lvl, assigned_col))
