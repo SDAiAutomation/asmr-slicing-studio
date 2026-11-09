@@ -22,7 +22,7 @@ DEFAULTS = {
     "cutting_speed": "auto",           # "auto" | "slow" | "medium" | "fast"
     "camera_style": "follow",          # "follow" | "static"
     "audio_profile": None,             # None -> same as material_profile
-    "music": False,
+    "music": True,                     # grid/levitate: melodic layer driven by the blade strokes
     "video_duration": None,            # seconds; None -> auto from piece count
     "resolution": [1080, 1920],
     "preview_resolution": [540, 960],

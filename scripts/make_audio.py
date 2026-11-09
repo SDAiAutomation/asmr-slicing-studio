@@ -2,7 +2,7 @@
 
 Six event layers per cut (contact, penetration, traversal, end of cut,
 separation, surface contact), material-specific, seeded variation, short room
-reverb, no music by default, peak-normalised below clipping.
+reverb, a melodic layer on grid/levitate videos ("music": false removes it), peak-normalised below clipping.
 
 Usage:
     python make_audio.py plan.json out_dir
@@ -174,6 +174,62 @@ def whoosh(rng, dur=0.16):
     return y * np.sin(np.linspace(0, np.pi, n)) ** 2 * 0.25
 
 
+# Musical layer: everything is placed on the plan's own frames, so it stays locked to the blade.
+PROGRESSION = [(0, 3, 7, 12), (-4, 0, 3, 8), (3, 7, 10, 15), (-2, 2, 5, 10)]  # Am F C G, as semitones
+ROOTS = [220.0, 196.0, 246.94, 174.61]
+
+
+def pluck(f, dur=0.55):
+    """Soft mallet: a warm fundamental, a bright bar overtone that dies quickly."""
+    t = np.arange(int(SR * dur)) / SR
+    y = (np.sin(2 * np.pi * f * t) * np.exp(-t / 0.2) + 0.35 * np.sin(2 * np.pi * f * 2 * t) * np.exp(-t / 0.09)
+         + 0.22 * np.sin(2 * np.pi * f * 4.02 * t) * np.exp(-t / 0.025))
+    a = int(SR * 0.002)
+    y[:a] *= np.linspace(0, 1, a)
+    return y
+
+
+def pad(freqs, dur):
+    """Slow chord bed under a level, gently moving so it never sits still."""
+    n = int(SR * dur)
+    t = np.arange(n) / SR
+    y = sum(np.sin(2 * np.pi * f * t) + 0.5 * np.sin(2 * np.pi * f * 1.004 * t) for f in freqs) / len(freqs)
+    y *= 0.8 + 0.2 * np.sin(2 * np.pi * 0.7 * t)
+    fade = min(n // 3, int(SR * 0.25))
+    e = np.ones(n)
+    e[:fade] = np.linspace(0, 1, fade)
+    e[-fade:] = np.linspace(1, 0, fade)
+    return y * e
+
+
+def music_layer(plan, buf, rng, t_of):
+    """A chord per level, one rising note per blade pass, a sparkle and a bass hit at each fall."""
+    root = ROOTS[int(rng.integers(len(ROOTS)))]
+    note = lambda semis: root * 2 ** (semis / 12)
+    n_lv = max(1, len(plan["levels"]) - 1)
+    blades = {}
+    for b in plan.get("blade_strokes", []):
+        blades.setdefault(b["level"], []).append(b)
+    for lvl in plan["levels"]:
+        li = lvl["level"]
+        chord = PROGRESSION[li % len(PROGRESSION)]
+        lift = li / n_lv          # the whole track swells towards the last level
+        t0, t1 = t_of(lvl["start_frame"]), t_of(lvl["collapse_end"])
+        place(buf, t0, pad([note(s - 12) for s in chord[:3]], t1 - t0 + 0.3), 0.0, 0.05 + 0.05 * lift)
+        place(buf, t_of(lvl["strokes_start"]), pluck(note(chord[0] - 24), 0.9), 0.0, 0.42)
+        for i, b in enumerate(blades.get(li, [])):
+            # climbing arpeggio: up through the chord, one octave higher every 4 passes
+            semis = chord[i % 4] + 12 * min(2, i // 4)
+            pan = float(np.clip(b["anchor"][0] / 0.12, -0.5, 0.5))
+            place(buf, t_of(b["time"]["exit"]), pluck(note(semis)), pan, 0.26 + 0.1 * lift)
+        # the fall: a quick upward run, then a deep hit when the pieces land
+        cs, ce = t_of(lvl["collapse_start"]), t_of(lvl["collapse_end"])
+        for k in range(8):
+            place(buf, cs + (ce - cs) * 0.75 * k / 8, pluck(note(chord[k % 4] + 12 + 12 * (k // 4)), 0.4),
+                  0.5 * np.sin(k * 1.7), 0.14 + 0.012 * k)
+        place(buf, ce - 0.05, pluck(note(chord[0] - 24), 1.0), 0.0, 0.55 + 0.25 * lift)
+
+
 def grid_events(plan, buf, P, rng, samples, events, t_of):
     """Grid format: a chop per stroke frame, a crumble cascade when the object collapses."""
     fps = plan["fps"]
@@ -225,6 +281,8 @@ def render(plan, out_dir):
     # scene width for stereo placement
     if plan.get("kind") == "grid":
         grid_events(plan, buf, P, rng, samples, events, t_of)
+        if cfg.get("music"):
+            music_layer(plan, buf, rng, t_of)
     xs = [h["plane_point"][0] + h["offset"][0] for h in plan.get("hits", [])] or [0]
     span = max(0.05, max(abs(min(xs)), abs(max(xs))))
 
@@ -336,7 +394,7 @@ def render(plan, out_dir):
             "peak_dbfs": round(20 * np.log10(np.abs(pcm).max() + 1e-12), 2),
             "rms_dbfs": round(20 * np.log10(rms + 1e-12), 2),
             "clipped_samples": clipped, "profile": prof_name,
-            "used_samples": sorted(samples), "music": False, "events": len(events)}
+            "used_samples": sorted(samples), "music": bool(plan.get("kind") == "grid" and cfg.get("music")), "events": len(events)}
     with open(os.path.join(out_dir, "audio_events.json"), "w", encoding="utf-8") as f:
         json.dump({"info": info, "events": events}, f)
     return info

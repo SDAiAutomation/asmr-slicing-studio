@@ -108,11 +108,11 @@ def _plan(cfg, ts=1.0):
                 [(2, k) for k in range(cuts[2], 0, -1)]
         # Visible blade passes: one per cut while it stays readable, then each pass stands for
         # a group of neighbouring cuts (they appear while the blade crosses the object).
-        min_slot = max(10, int(0.42 * fps))
+        min_slot = max(8, int(0.36 * fps))
         n_cuts = max(1, len(order))
         readable = n_cuts <= 20   # every cut gets its own, unhurried blade pass
         if readable:
-            min_slot = max(min_slot, int(0.6 * fps))
+            min_slot = max(min_slot, int(0.4 * fps))
         visible = n_cuts if readable else min(n_cuts, max(1, dur // min_slot))
         yaw = yaws[li % 4] if levitate else 0.0
         pose = KT.Pose(yaw, centre, height / 2)
@@ -153,7 +153,8 @@ def _plan(cfg, ts=1.0):
             body = max(min_slot, KT.body_frames(st))
             needs.append((fly, body))
             prev_ready = (p1, q1)
-        dur = max(dur, sum(a + b for a, b in needs))
+        # readable levels take exactly the time their passes need: a brisk, steady blade
+        dur = sum(a + b for a, b in needs) if readable else max(dur, sum(a + b for a, b in needs))
         spare = dur - sum(a + b for a, b in needs)
         cursor = f
         for gi, ((g, st), (fly, body)) in enumerate(zip(planned, needs)):
@@ -199,7 +200,7 @@ def _plan(cfg, ts=1.0):
                 pieces_ev.append((int(sf), cnt, li))
                 last_eval_frame = sf
         f_end = f + dur + 2
-        collapse = max(int(0.45 * fps), int(0.75 * fps * ts))
+        collapse = min(int(0.85 * fps), max(int(0.45 * fps), int(0.75 * fps * ts)))  # gravity does not slow down
         hold = max(int(0.35 * fps), int(0.7 * fps * ts))
         exit_f = max(int(0.3 * fps), int(0.4 * fps * ts))
         lvl = {"level": li, "cuts": int(C), "cuts_xyz": cuts.tolist(), "cells_xyz": n.tolist(),

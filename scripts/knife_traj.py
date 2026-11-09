@@ -188,7 +188,7 @@ def plan_stroke(shape, pose, p_obj, n_obj, radius, scale, floor_z=0.0):
             "s_ready": s_in - CLEARANCE, "width": float(width), "draw": float(min(0.024, free)), "covered": bool(free > 0)}
 
 
-VMAX = 0.075      # metres per frame: fast swing, still believable
+VMAX = 0.09       # metres per frame: fast swing, still believable
 ANG_MAX = 0.55    # radians per frame
 
 
@@ -197,8 +197,8 @@ def retract_frames(st):
 
 
 def body_frames(st):
-    """Frames a stroke needs: retract under VMAX + 2 of separation + at least 8 to cut."""
-    return retract_frames(st) + 2 + 8
+    """Frames a stroke needs: retract under VMAX + 1 of separation + at least 6 to cut."""
+    return retract_frames(st) + 1 + 6
 
 
 def transit_frames(p0, q0, p1, q1, centre, safe_r):
@@ -215,10 +215,10 @@ def timing(a, b, resistance, retract):
     """Integer frames of a stroke leaving the ready pose at frame a and ending before b."""
     r = b - 1
     sep_end = r - max(retract, (b - a) // 5)
-    x = sep_end - 2
+    x = sep_end - 1
     cutting = x - a
     slow = 0.7 + resistance
-    approach = max(3, round(cutting * (0.55 - 0.15 * resistance)))
+    approach = max(2, round(cutting * (0.42 - 0.12 * resistance)))
     c = a + approach
     pen = max(1, round((x - c) * 0.3 * slow))
     return {"ready": a, "contact": c, "pen_end": c + min(pen, x - c - 1), "exit": x,

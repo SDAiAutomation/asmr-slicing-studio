@@ -401,6 +401,7 @@ def collapse_group(mat):
     I.new_socket(name="Collapse", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="CubeSize", in_out="INPUT", socket_type="NodeSocketVector")
     I.new_socket(name="Height", in_out="INPUT", socket_type="NodeSocketFloat")
+    I.new_socket(name="Drop", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
     N, L = ng.nodes, ng.links
     gi, go = N.new("NodeGroupInput"), N.new("NodeGroupOutput")
@@ -424,12 +425,33 @@ def collapse_group(mat):
         return n.outputs[0]
 
     col, H = gi.outputs["Collapse"], gi.outputs["Height"]
-    # cubes sink towards the board (pile keeps ~25-30 % of its height)...
-    dz = m("MULTIPLY", m("MULTIPLY", col, -1.0), m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.22, 0.62)))
-    # ...and the upper ones slide outwards
     rel = m("DIVIDE", sep.outputs["Z"], m("MAXIMUM", H, 1e-4))
+    # each cube lets go at its own moment: lower ones first, with some randomness
+    rnd2 = N.new("FunctionNodeRandomValue")
+    rnd2.data_type = "FLOAT"
+    rnd2.inputs["Seed"].default_value = 17
+    rv2 = [o for o in rnd2.outputs if o.enabled and o.type == "VALUE"][0]
+    delay = m("ADD", m("MULTIPLY", rel, 0.14), m("MULTIPLY", rv2, 0.2))
+    local = m("DIVIDE", m("MAXIMUM", m("SUBTRACT", col, delay), 0.0), m("SUBTRACT", 1.0, delay))
+    # free fall (accelerating), a hard landing, then a small damped rebound
+    fall = N.new("ShaderNodeFloatCurve")
+    L.new(local, fall.inputs["Value"])
+    curve = fall.mapping.curves[0]
+    pts = [(0.0, 0.0), (0.2, 0.09), (0.4, 0.37), (0.55, 0.69), (0.66, 1.0), (0.76, 0.94), (0.86, 1.0), (0.93, 0.985), (1.0, 1.0)]
+    while len(curve.points) < len(pts):
+        curve.points.new(0.5, 0.5)
+    for p, (x, y) in zip(curve.points, pts):
+        p.location = (x, y)
+    for i in (4, 6, 8):
+        curve.points[i].handle_type = "VECTOR"
+    fall.mapping.update()
+    fv = fall.outputs[0]
+    # cubes sink towards the board (pile keeps ~25-30 % of its height), plus any height to fall
+    dz = m("MULTIPLY", m("MULTIPLY", fv, -1.0),
+           m("ADD", m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.22, 0.62)), gi.outputs["Drop"]))
+    # ...and the upper ones slide outwards
     # outward expansion proportional to the distance from the centre (pile widens ~10-25 %)
-    spread = m("MULTIPLY", col, m("MULTIPLY", m("ADD", rel, 0.3), m("MULTIPLY_ADD", rv, 0.18, 0.06)))
+    spread = m("MULTIPLY", fv, m("MULTIPLY", m("ADD", rel, 0.3), m("MULTIPLY_ADD", rv, 0.18, 0.06)))
     xy = N.new("ShaderNodeCombineXYZ")
     L.new(sep.outputs["X"], xy.inputs[0])
     L.new(sep.outputs["Y"], xy.inputs[1])
@@ -458,6 +480,16 @@ def collapse_group(mat):
     iop = N.new("GeometryNodeInstanceOnPoints")
     L.new(sp.outputs["Geometry"], iop.inputs["Points"])
     L.new(sm.outputs["Geometry"], iop.inputs["Instance"])
+    # pieces tumble while they fall and stay turned where they land
+    spin = N.new("FunctionNodeRandomValue")
+    spin.data_type = "FLOAT_VECTOR"
+    inv = [i for i in spin.inputs if i.enabled and i.type == "VECTOR"]
+    inv[0].default_value, inv[1].default_value = (-1.3, -1.3, -1.3), (1.3, 1.3, 1.3)
+    spun = N.new("ShaderNodeVectorMath")
+    spun.operation = "SCALE"
+    L.new([o for o in spin.outputs if o.enabled and o.type == "VECTOR"][0], spun.inputs[0])
+    L.new(fv, spun.inputs["Scale"])
+    L.new(spun.outputs[0], iop.inputs["Rotation"])
     L.new(iop.outputs["Instances"], go.inputs["Geometry"])
     ids = {it.name: it.identifier for it in I.items_tree
            if getattr(it, "item_type", "SOCKET") == "SOCKET" and it.in_out == "INPUT"}
@@ -524,6 +556,7 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
     mod[ids["CubeSize"]] = list(size)
     mod[ids["Height"]] = float(height)
     mod[ids["Collapse"]] = 0.0
+    mod[ids["Drop"]] = 0.0
     me.materials.append(mat)
     return ob, mod
 
@@ -657,29 +690,30 @@ def build_grid_scene(plan, out_dir):
         B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
         cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
-        B.interp("BEZIER")
+        B.interp("LINEAR")   # the fall curve lives in the node group: no double easing
         mod[ids["Collapse"]] = 0.0
         # levitate: the pieces burst apart in the air for a beat, then drop on the board
         drop = lvl["collapse_start"] + (int(0.2 * fps) if levitate else 0)
         cob.keyframe_insert(data_path=path, frame=drop)
         mod[ids["Collapse"]] = 1.0
         cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
+        B.interp("BEZIER")
+        rest_z = 0.0
         if levitate:
+            # the cubes stay parented at flight height and each one falls the lift on its own
+            rest_z = lift
+            mod[ids["Drop"]] = float(lift)
             cob.rotation_euler = (0.0, 0.0, lvl["yaw"])
-            cob.location = (0, 0, lift)
-            cob.keyframe_insert("location", frame=lvl["collapse_start"])
-            cob.keyframe_insert("location", frame=drop)
             cob.scale = (1, 1, 1)
             cob.keyframe_insert("scale", frame=lvl["collapse_start"])
-            cob.scale = (1.14, 1.14, 1.14)
+            cob.scale = (1.08, 1.08, 1.08)
             cob.keyframe_insert("scale", frame=drop)
-            cob.location = (0, 0, 0)
-            cob.keyframe_insert("location", frame=lvl["collapse_end"])
+            # back to true size before the first cube can reach the board
             cob.scale = (1, 1, 1)
-            cob.keyframe_insert("scale", frame=lvl["collapse_end"])
-        cob.location = (0, 0, 0)
+            cob.keyframe_insert("scale", frame=drop + max(1, int((lvl["collapse_end"] - drop) * 0.45)))
+        cob.location = (0, 0, rest_z)
         cob.keyframe_insert("location", frame=lvl["exit_start"])
-        cob.location = (-0.6, 0, 0)
+        cob.location = (-0.6, 0, rest_z)
         cob.keyframe_insert("location", frame=lvl["end_frame"])
         report["levels"].append({"level": li, "cuts": lvl["cuts"], "cubes_planned": lvl["cubes"],
                                  "cubes_built": built, "cubes_displayed": int(len(co))})
