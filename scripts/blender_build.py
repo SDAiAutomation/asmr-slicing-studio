@@ -927,7 +927,7 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
         scn_plate = bpy.context.scene.collection
         scn_plate.objects.link(plate)
         plate.parent = cam
-        plate.location = (0, -hh * 0.463, -D * 1.003)
+        plate.location = (0, -hh * 0.48, -D * 1.003)
         plate.scale = (hh * 0.12, hh * 0.037, 1)
     if cfg.get("hook_text"):
         ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.31, -D), cam, white)
