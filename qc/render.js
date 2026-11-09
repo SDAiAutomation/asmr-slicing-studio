@@ -14,7 +14,7 @@ const FPS = 30;
   const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--allow-file-access-from-files'] });
   const page = await browser.newPage({ viewport: { width: 400, height: 400 } });
   page.on('pageerror', e => { console.error('pageerror:', e.message); process.exitCode = 1; });
-  await page.goto('file://' + path.join(__dirname, 'engine.html'));
+  await page.goto('file://' + path.join(__dirname, cfg.engine === 'physics' ? 'physics.html' : 'engine.html'));
   await page.evaluate(() => window.ready);
   const tl = await page.evaluate(c => window.setup(c), cfg);
   const N = Math.round(tl.duration * FPS);
