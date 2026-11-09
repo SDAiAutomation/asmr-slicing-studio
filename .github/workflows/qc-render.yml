@@ -162,7 +162,7 @@ jobs:
           ok = os.path.exists("work/video.mp4")
           row = {"date": datetime.datetime.utcnow().isoformat(timespec="minutes") + "Z",
                  "run_number": int(os.environ["GITHUB_RUN_NUMBER"]), "status": "ok" if ok else "failed",
-                 "id": cfg.get("id"), "rounds": [r["specimen"] + ":" + r["kind"] for r in cfg["rounds"]],
+                 "id": cfg.get("id"), "rounds": [r.get("specimen", "pair") + ":" + r["kind"] for r in cfg["rounds"]],
                  "source": cfg.get("source"), "caption": cfg.get("caption", ""),
                  "views": None, "likes": None, "comments": None, "shares": None}
           os.makedirs("history", exist_ok=True)
