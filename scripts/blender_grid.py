@@ -214,7 +214,7 @@ def steak_materials(M):
     return [fat, meat_mat(M), fat]
 
 
-def add_seams(mat, P, nodes_out):
+def add_seams(mat, P, nodes_out, colour=(0.03, 0.006, 0.004, 1)):
     """Darken thin lines at the planned cut positions whose cut is already made.
     P: dict name -> Value node (lo_x.., cell_x.., n_x, n_y, n_z, cz, w)."""
     nt = mat.node_tree
@@ -265,7 +265,7 @@ def add_seams(mat, P, nodes_out):
         L.new(base_link.from_socket, a)
     else:
         a.default_value = bsdf.inputs["Base Color"].default_value
-    b.default_value = (0.03, 0.006, 0.004, 1)
+    b.default_value = colour
     L.new(o, bsdf.inputs["Base Color"])
     nodes_out.append(P)
 
@@ -456,6 +456,7 @@ def build_grid_scene(plan, out_dir):
     board_size = (board_w, board_w * 0.66)
     B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
 
+    levitate = cfg["format"] == "levitate"
     steak = getattr(shape, "kind", "") == "extruded"
     if steak:
         mats = steak_materials(M)
@@ -464,7 +465,7 @@ def build_grid_scene(plan, out_dir):
     params = {}
     seam_sets = []
     for mt in {id(m): m for m in mats}.values():
-        add_seams(mt, {}, seam_sets)
+        add_seams(mt, {}, seam_sets, (0.95, 0.78, 0.55, 1) if levitate else (0.03, 0.006, 0.004, 1))
     me = object_mesh(shape, "Object")
     for mt in mats:
         me.materials.append(mt)
@@ -473,6 +474,28 @@ def build_grid_scene(plan, out_dir):
     ng, ids = collapse_group(cmat)
     knife = B.build_knife()
     kmat = bpy.data.materials["Steel"]
+    lift = 0.0
+    frame_obj = None
+    pivot = None
+    extra_knives = []
+    centre = Vector((0.0, 0.0, 0.0))
+    if levitate:
+        lift = float(cfg["levitate_height"] or max(0.095, span * 0.55))
+        centre = Vector((0.0, 0.0, lift + float(hi[2] - lo[2]) / 2))
+        # decorative knives keep world space; the working knife follows the tumbling object
+        for _ in range(2):
+            k2 = knife.copy()
+            scn.collection.objects.link(k2)
+            extra_knives.append(k2)
+        pivot = bpy.data.objects.new("Pivot", None)
+        scn.collection.objects.link(pivot)
+        pivot.location = centre
+        pivot.rotation_mode = "XYZ"
+        frame_obj = bpy.data.objects.new("ObjectFrame", None)
+        scn.collection.objects.link(frame_obj)
+        frame_obj.parent = pivot
+        frame_obj.location = (0.0, 0.0, -float(hi[2] - lo[2]) / 2)
+        knife.parent = frame_obj
     report = {"levels": [], "failures": []}
 
     def key_param(name, frame, value):
@@ -511,6 +534,20 @@ def build_grid_scene(plan, out_dir):
 
         ob = bpy.data.objects.new(f"Level_{li:02d}", me)
         scn.collection.objects.link(ob)
+        if levitate:
+            ob.parent = frame_obj
+            # whole turns only: the object is upright again when it comes apart, so the cubes match
+            turns_z = 2 * math.pi * (1 if li % 2 else -1)
+            long_level = lvl["strokes_end"] - lvl["strokes_start"] >= 2.0 * fps
+            turns_x = (2 * math.pi if long_level else 0.0)
+            B.interp("CONSTANT")
+            pivot.rotation_euler = (0.0, 0.0, 0.0)
+            pivot.keyframe_insert("rotation_euler", frame=start)
+            B.interp("BEZIER")
+            pivot.keyframe_insert("rotation_euler", frame=lvl["strokes_start"])
+            B.interp("CONSTANT")
+            pivot.rotation_euler = (turns_x, 0.0, turns_z)
+            pivot.keyframe_insert("rotation_euler", frame=lvl["collapse_start"])
         B.set_visibility(ob, start, lvl["collapse_start"])
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
@@ -552,6 +589,29 @@ def build_grid_scene(plan, out_dir):
                 knife.keyframe_insert("location", frame=f)
                 knife.keyframe_insert("rotation_quaternion", frame=f)
                 last_knife = f
+        if levitate and lvl["cuts"] >= 10:
+            rng = np.random.default_rng(int(cfg["random_seed"]) + li)
+            B.interp("LINEAR")
+            reach = span * 1.25
+            away = Vector((1.6, 0.0, 0.5))
+            for ki, k2 in enumerate(extra_knives):
+                f = lvl["strokes_start"] + ki * 3
+                k2.location = away
+                k2.keyframe_insert("location", frame=max(1, f - 1))
+                side = 1.0
+                while f < lvl["strokes_end"]:
+                    u = Vector(rng.normal(size=3)).normalized()
+                    n_b = u.cross(Vector(rng.normal(size=3))).normalized()
+                    k2.rotation_quaternion = B.blade_quat(tuple(n_b), tuple(-u * side))
+                    k2.keyframe_insert("rotation_quaternion", frame=f)
+                    k2.location = centre + u * reach * side
+                    k2.keyframe_insert("location", frame=f)
+                    k2.location = centre - u * reach * side
+                    k2.keyframe_insert("location", frame=f + 5)
+                    k2.keyframe_insert("rotation_quaternion", frame=f + 5)
+                    f += 6
+                k2.location = away
+                k2.keyframe_insert("location", frame=f + 1)
         # fast cutting reads as a blur: make the blade translucent while strokes are dense
         dense = len(strokes) / max(1, lvl["strokes_end"] - lvl["strokes_start"]) > 0.6
         bsdf = kmat.node_tree.nodes.get("Principled BSDF")
@@ -582,9 +642,22 @@ def build_grid_scene(plan, out_dir):
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
         B.interp("BEZIER")
         mod[ids["Collapse"]] = 0.0
-        cob.keyframe_insert(data_path=path, frame=lvl["collapse_start"])
+        # levitate: the pieces burst apart in the air for a beat, then drop on the board
+        drop = lvl["collapse_start"] + (int(0.12 * fps) if levitate else 0)
+        cob.keyframe_insert(data_path=path, frame=drop)
         mod[ids["Collapse"]] = 1.0
         cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
+        if levitate:
+            cob.location = (0, 0, lift)
+            cob.keyframe_insert("location", frame=drop)
+            cob.scale = (1, 1, 1)
+            cob.keyframe_insert("scale", frame=lvl["collapse_start"])
+            cob.scale = (1.1, 1.1, 1.1)
+            cob.keyframe_insert("scale", frame=drop)
+            cob.location = (0, 0, 0)
+            cob.keyframe_insert("location", frame=lvl["collapse_end"])
+            cob.scale = (1, 1, 1)
+            cob.keyframe_insert("scale", frame=lvl["collapse_end"])
         cob.location = (0, 0, 0)
         cob.keyframe_insert("location", frame=lvl["exit_start"])
         cob.location = (-0.6, 0, 0)
@@ -598,6 +671,7 @@ def build_grid_scene(plan, out_dir):
         lf, tot = plan["loop_in"], plan["total_frames"]
         ob = bpy.data.objects.new("LoopObject", me)
         scn.collection.objects.link(ob)
+        ob.parent = frame_obj
         B.set_visibility(ob, lf, None)
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0)
@@ -612,7 +686,7 @@ def build_grid_scene(plan, out_dir):
         cuts_ev.append((lf, 0, li0["cuts"]))
         pieces_ev.append((lf, 1))
 
-    cam = grid_camera(plan, lo, hi, board_size)
+    cam = grid_camera(plan, lo, hi, board_size, lift)
     B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"])
     B.setup_render(scn, cfg, out_dir, final=False)
     report["final_pieces_validated"] = report["levels"][-1]["cubes_built"] if report["levels"] else 0
@@ -624,7 +698,7 @@ def build_grid_scene(plan, out_dir):
     return report
 
 
-def grid_camera(plan, lo, hi, board_size):
+def grid_camera(plan, lo, hi, board_size, lift=0.0):
     """Whole board in frame (~92 % of the width), object centred, slight depth of field."""
     cd = bpy.data.cameras.new("Camera")
     cd.lens = 50
@@ -636,9 +710,9 @@ def grid_camera(plan, lo, hi, board_size):
     vfov = 2 * math.atan(18 / 50)
     hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
     half_w = board_size[0] / 2 / 0.92
-    elev, azim = math.radians(34), math.radians(-90)
+    elev, azim = math.radians(22 if lift else 34), math.radians(-90)
     view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
-    target = Vector((0, 0.01, 0.01))
+    target = Vector((0, 0.01, 0.01 + lift * 0.7))
     dist = half_w / math.tan(hfov / 2)
     cam.location = target + view * dist
     cam.rotation_mode = "QUATERNION"

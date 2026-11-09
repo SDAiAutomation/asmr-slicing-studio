@@ -37,6 +37,10 @@ DEFAULTS = {
     "hook_text": "",                   # big question shown during the opening seconds
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
     "format": "slices",                # "slices" (progressive halving) | "grid" (levels of grid cuts -> cubes)
+                                       # | "levitate" (grid levels cut in mid-air, pieces drop on the board)
+    "levitate_height": None,           # levitate format: gap board -> object (m); None -> from object size
+    "preview_samples": 12,             # Cycles samples for non --final renders
+    "export_resolution": None,         # [w, h]: upscale frames at export (lanczos); None -> as rendered
     "cuts_sequence": None,             # grid format: cuts per level; None -> auto
     "max_cubes": 20000000,             # grid format: safety cap on the final level
     "display_cubes_max": 1200000,      # grid format: cubes actually instanced per level (render budget)
@@ -91,11 +95,11 @@ def validate_config(cfg):
     if any(b <= a for a, b in zip(seq, seq[1:])) or seq[0] < 2:
         raise ValueError(f"progression_sequence must be strictly increasing and >= 2: {seq}")
     cfg["progression_sequence"] = seq
-    if cfg["format"] not in ("slices", "grid"):
-        raise ValueError("format must be 'slices' or 'grid'")
+    if cfg["format"] not in ("slices", "grid", "levitate"):
+        raise ValueError("format must be 'slices', 'grid' or 'levitate'")
     if cfg["label_pieces"] is None:
         cfg["label_pieces"] = "CUBES" if cfg["format"] == "grid" else "PIECES"
-    if cfg["format"] == "grid":
+    if cfg["format"] in ("grid", "levitate"):
         cs = cfg["cuts_sequence"] or GRID_AUTO_CUTS
         cs = [int(c) for c in cs]
         if any(c < 1 for c in cs):

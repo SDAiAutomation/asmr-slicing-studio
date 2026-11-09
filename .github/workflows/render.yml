@@ -104,6 +104,11 @@ jobs:
                 "random_seed": int(seed) if seed else random.randint(1, 10**6),
               }
               quality = "${{ inputs.quality || 'preview' }}"
+          if quality == "hd":  # sharper than preview, still fits the free CPU runners
+              cfg.setdefault("preview_resolution", [720, 1280])
+              cfg.setdefault("preview_samples", 20)
+              cfg.setdefault("fps", 24)
+              cfg.setdefault("export_resolution", [1080, 1920])
           # TikTok only pays (Creator Rewards) for videos over 1 minute: aim for 62 s unless set
           cfg.setdefault("video_duration", 62)
           n = cfg["target_piece_count"]
@@ -151,6 +156,13 @@ jobs:
           for f in work/summary.json work/blender_report.json work/previews/0*.png; do
             [ -f "$f" ] && rclone copyto "$f" "${REMOTE}_logs/run${GITHUB_RUN_NUMBER}_$(basename "$f")" --drive-root-folder-id "$DRIVE_FOLDER_ID"
           done; true
+
+      - name: Log preview montage (preview-only runs, reviewable from the job log)
+        if: inputs.preview_only == 'yes'
+        run: |
+          cd work/previews
+          ffmpeg -v error -y -pattern_type glob -i '0[12346]_*.png' -vf "scale=300:534,tile=6x1" -frames:v 1 -q:v 5 montage.jpg
+          echo "MONTAGE_START"; base64 -w0 montage.jpg; echo; echo "MONTAGE_END"
 
       - name: Split frames across machines
         id: shards
