@@ -43,6 +43,10 @@ def validate_plan(plan):
         if stats.get("grouped_cut_planes") != sum(max(0, len(s.get("hits", [])) - 1) for s in strokes):
             errors.append("slices: grouped_cut_planes mismatch")
         blades = plan.get("blade_strokes", [])
+        if "blade_strokes" in stats and stats["blade_strokes"] != len(blades):
+            errors.append("slices: animated blade pass statistic mismatch")
+        if "planned_strokes" in stats and stats["planned_strokes"] != len(strokes):
+            errors.append("slices: planned stroke statistic mismatch")
         if sum(b.get("group_cuts", 0) for b in blades) > len(hits):
             errors.append("slices: blade group coverage exceeds actual cuts")
     else:
