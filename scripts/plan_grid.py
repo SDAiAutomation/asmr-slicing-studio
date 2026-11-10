@@ -204,6 +204,8 @@ def _plan(cfg, ts=1.0):
                 cut_group[int(j)] = gi
             cursor = end
         blade_strokes.extend(lvl_blades)
+        grouped_cut_count = sum(len(g) for g, _ in planned if len(g) > 1)
+        max_cuts_per_pass = max((len(g) for g, _ in planned), default=0)
         active = [0, 0, 0]
         z_done = 0
         last_eval_frame = None
@@ -247,7 +249,9 @@ def _plan(cfg, ts=1.0):
                "strokes_start": f, "strokes_end": f + dur, "collapse_start": f_end,
                "collapse_end": f_end + collapse, "exit_start": f_end + collapse + hold,
                "end_frame": f_end + collapse + hold + exit_f,
-               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(), "yaw": yaw}
+               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(), "yaw": yaw,
+               "visible_blade_passes": len(lvl_blades), "grouped_cut_count": grouped_cut_count,
+               "max_cuts_per_pass": max_cuts_per_pass}
         if progressive:     # a slice leaves as soon as the blade has passed its plane
             xf = [cut_frames[j] for j, (ax, _k) in enumerate(order) if ax == 0]
             lvl["release_start"] = int(xf[0])
@@ -269,7 +273,8 @@ def _plan(cfg, ts=1.0):
         "knife_track": KT.build_track(blade_strokes, int(total), centre, safe_r),
         "object_reaction": KT.reaction_track(blade_strokes, int(total), resistance),
         "counters": {"cuts": cuts_ev, "pieces": pieces_ev},
-        "stats": {"levels": len(levels), "blade_strokes": len(strokes),
+        "stats": {"levels": len(levels), "blade_strokes": len(blade_strokes),
+                  "planned_cuts": len(strokes),
                   "final_cubes": levels[-1]["cubes"] if levels else 0,
                   "plan_seconds": round(time.time() - t0, 2)},
     }
