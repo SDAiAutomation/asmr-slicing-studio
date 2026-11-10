@@ -31,6 +31,24 @@ class PlanQATests(unittest.TestCase):
              "stats": {"cut_planes": 2, "grouped_cut_planes": 1}}
         self.assertTrue(validate_plan(p))
 
+    def test_slices_actual_blade_passes(self):
+        p = {"hits": [{}, {}, {}],
+             "strokes": [{"hits": [0, 1, 2], "cut_planes": 3, "grouped_hits": 2}],
+             "blade_strokes": [{"group_cuts": 3}],
+             "stats": {"cut_planes": 3, "grouped_cut_planes": 2,
+                       "blade_strokes": 1, "planned_strokes": 1}}
+        self.assertEqual(validate_plan(p), [])
+        p["stats"]["blade_strokes"] = 3
+        self.assertIn("slices: animated blade pass statistic mismatch", validate_plan(p))
+
+    def test_slices_planned_stroke_count(self):
+        p = {"hits": [{}],
+             "strokes": [{"hits": [0], "cut_planes": 1, "grouped_hits": 0}],
+             "blade_strokes": [{"group_cuts": 1}],
+             "stats": {"cut_planes": 1, "grouped_cut_planes": 0,
+                       "blade_strokes": 1, "planned_strokes": 2}}
+        self.assertIn("slices: planned stroke statistic mismatch", validate_plan(p))
+
     def test_slices_overreported_blade_coverage(self):
         p = {"hits": [{}], "strokes": [{"hits": [0], "cut_planes": 1, "grouped_hits": 0}],
              "blade_strokes": [{"group_cuts": 2}], "stats": {"cut_planes": 1, "grouped_cut_planes": 0}}
