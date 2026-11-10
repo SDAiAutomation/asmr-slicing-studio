@@ -357,7 +357,8 @@ def plan(cfg):
         "levels": level_info,
         **blade,
         "stats": {
-            "blade_strokes": len(strokes),
+            "blade_strokes": len(blade["blade_strokes"]),
+            "planned_strokes": len(strokes),
             "cut_planes": len(hits),
             "grouped_cut_planes": sum(st["grouped_hits"] for st in strokes),
             "expected_final_pieces": len(final_alive),
