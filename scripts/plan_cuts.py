@@ -299,6 +299,8 @@ def plan(cfg):
             if dense:
                 frame = stroke_start + stroke_frames
             stroke["dense"] = dense
+            stroke["cut_planes"] = len(stroke["hits"])
+            stroke["grouped_hits"] = max(0, len(stroke["hits"]) - 1)
             frame += traverse + post
             # settle every piece of this level to the new explode factor
             e_after = explode_factor(len(alive), mat["separation"])
@@ -357,6 +359,7 @@ def plan(cfg):
         "stats": {
             "blade_strokes": len(strokes),
             "cut_planes": len(hits),
+            "grouped_cut_planes": sum(st["grouped_hits"] for st in strokes),
             "expected_final_pieces": len(final_alive),
             "target": cfg["target_piece_count"],
             "fallback_axis_cuts": fallbacks,
