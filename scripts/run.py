@@ -5,7 +5,7 @@
   python run.py render   RUN_DIR [--final]     # render PNG frames (resumable)
   python run.py export   RUN_DIR               # MP4 (H.264 + AAC) + ffprobe/decode checks
   python run.py all      config.json [--final] # everything in one go
-  python run.py bench    15,50,100,400         # performance table (plan+audio+build+3 frames)
+  python run.py bench    25,100,400,1000       # performance table: one level of N cuts each
 
 Each preview creates a fresh RUN_DIR under config.output_path, so earlier
 videos are never overwritten.
@@ -76,7 +76,7 @@ def cmd_check():
 def new_run_dir(cfg):
     base = os.path.abspath(cfg["output_path"])
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    name = f"{stamp}_{cfg['object_type']}_{cfg['target_piece_count']}p_{cfg['cutting_mode']}"
+    name = f"{stamp}_{cfg['object_type']}_{max(cfg['cuts_sequence'])}cuts"
     d = os.path.join(base, name)
     os.makedirs(d, exist_ok=False)
     return d
@@ -139,29 +139,20 @@ def cmd_preview(config_path):
         json.dump(cfg, f, indent=1)
     perf = {}
     plan_path = os.path.join(rd, "plan.json")
-    planner = "plan_grid.py" if cfg["format"] in ("grid", "levitate") else "plan_cuts.py"
-    plan_stats, perf["plan_s"] = run_py(planner, os.path.join(rd, "config.json"), plan_path)
+    plan_stats, perf["plan_s"] = run_py("plan_grid.py", os.path.join(rd, "config.json"), plan_path)
     audio, perf["audio_s"] = run_py("make_audio.py", plan_path, rd)
     rep, perf["blender_build_and_previews_s"] = run_blender(
         ["--plan", plan_path, "--out", rd, "--stage", "build"], os.path.join(rd, "blender.log"))
     sheet = contact_sheet(rd)
     with open(os.path.join(rd, "plan.json"), encoding="utf-8") as f:
         plan = json.load(f)
-    if plan.get("kind") == "grid":
-        impacts = [{"level": s["level"], "axis": "XYZ"[s["axis"]], "frame": s["frame"],
-                    "cut": s["n_in_level"]} for s in plan["strokes"]]
-    else:
-        impacts = [{"hit": i, "stroke": h["stroke"], "contact_frame": h["contact_frame"],
-                    "exit_frame": h["exit_frame"], "normal": [round(x, 3) for x in h["plane_normal"]],
-                    "count_after": h["count_after"]} for i, h in enumerate(plan["hits"])]
+    impacts = [{"level": s["level"], "axis": "XYZ"[s["axis"]], "frame": s["frame"],
+                "cut": s["n_in_level"]} for s in plan["strokes"]]
     with open(os.path.join(rd, "impact_frames.json"), "w", encoding="utf-8") as f:
         json.dump(impacts, f, indent=1)
     summary = {"run_dir": rd, "plan": plan_stats, "audio": audio, "blender": rep,
                "perf": {k: round(v, 2) for k, v in perf.items()}, "progression_sheet": sheet,
-               "strokes": ([{"level": l["level"], "cuts": l["cuts"], "cubes": l["cubes"]} for l in plan["levels"]]
-                           if plan.get("kind") == "grid" else
-                           [{"i": s["index"], "direction": s["direction"],
-                             "count_after": s["count_after"]} for s in plan["strokes"]])}
+               "levels": [{"level": l["level"], "cuts": l["cuts"], "cubes": l["cubes"]} for l in plan["levels"]]}
     with open(os.path.join(rd, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)
     print(json.dumps(summary, indent=1))
@@ -238,14 +229,14 @@ def cmd_bench(counts):
     for n in counts:
         cfg_path = os.path.join(HERE, f"_bench_{n}.json")
         with open(cfg_path, "w") as f:
-            json.dump({"target_piece_count": n, "output_path": "bench_runs"}, f)
+            json.dump({"cuts_sequence": [n], "output_path": "bench_runs"}, f)
         t = time.time()
         rd = cmd_preview(cfg_path)
         rep = json.load(open(os.path.join(rd, "blender_report.json")))
         # render 3 frames at preview size to estimate per-frame cost
         r = cmd_render_sample(rd)
-        rows.append({"target": n, "validated": rep["final_pieces_validated"],
-                     "failures": len(rep["failures"]), "non_manifold": rep["non_manifold"],
+        rows.append({"cuts": n, "cubes": rep["final_pieces_validated"],
+                     "failures": len(rep["failures"]),
                      "objects": rep["objects"], "pipeline_s": round(time.time() - t, 1),
                      "sec_per_preview_frame": r, "blend_mb": round(
                          os.path.getsize(os.path.join(rd, "scene.blend")) / 1e6, 1)})

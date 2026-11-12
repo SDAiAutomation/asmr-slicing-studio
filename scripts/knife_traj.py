@@ -264,7 +264,9 @@ def stroke_s(st, frame):
     mean = trav_len / max(1, t["exit"] - t["contact"])
     v_c = mean * (1.0 - 0.3 * res)
     v_p = mean * (0.75 - 0.4 * res)
-    v_x = mean * 1.15
+    # a cut that ends on the board has no exit run: the blade slows into the wood instead
+    # of overshooting the board and bouncing back
+    v_x = 0.0 if st["s_end"] - st["s_out"] < 1e-6 else mean * 1.15
     depth = st["s_in"] + 0.22 * trav_len
     knots = [(t["ready"], st["s_ready"], 0.0), (t["contact"], st["s_in"], v_c),
              (t["pen_end"], depth, v_p), (t["exit"], st["s_out"], v_x),
@@ -340,18 +342,3 @@ def build_track(strokes, total_frames, centre, safe_r):
         last = q
         out.append([round(float(x), 6) for x in (*p, *q)])
     return out
-
-
-def reaction_track(strokes, total_frames, resistance):
-    """Small spring-damped recoil of the object at each contact (offset per frame)."""
-    off = np.zeros((total_frames + 1, 3))
-    amp = 0.0012 + 0.0016 * resistance
-    for st in strokes:
-        c = st["time"]["contact"]
-        d = np.asarray(st["d"], float)
-        for f in range(c, min(total_frames + 1, c + 12)):
-            t = f - c
-            off[f] += d * amp * math.exp(-t / 3.2) * math.cos(t * 0.95)
-    norm = np.linalg.norm(off, axis=1)
-    k = np.minimum(1.0, 0.003 / np.maximum(norm, 1e-9))
-    return np.round(off[1:] * k[1:, None], 6).tolist()

@@ -1,8 +1,9 @@
 """Procedural ASMR soundtrack built from the same plan.json as the animation.
 
-Six event layers per cut (contact, penetration, traversal, end of cut,
-separation, surface contact), material-specific, seeded variation, short room
-reverb, no music by default, peak-normalised below clipping.
+Grid format: a whoosh + chop per visible blade pass (placed on the frames where the
+edge enters and leaves the object), a crumble cascade and a thud when each level
+collapses into cubes. Material-specific, seeded variation, short room reverb,
+peak-normalised below clipping.
 
 Usage:
     python make_audio.py plan.json out_dir
@@ -175,7 +176,7 @@ def whoosh(rng, dur=0.16):
 
 
 def grid_events(plan, buf, P, rng, samples, events, t_of):
-    """Grid format: a chop per stroke frame, a crumble cascade when the object collapses."""
+    """A chop per blade pass, a crumble cascade when the object collapses."""
     fps = plan["fps"]
     # one sound per visible blade pass, placed on the frames where the edge enters and
     # leaves the object: the audio cannot drift from the animation
@@ -222,89 +223,7 @@ def render(plan, out_dir):
     events = []
     t_of = lambda f: (f - 1) / fps  # frame 1 is t = 0
 
-    # scene width for stereo placement
-    if plan.get("kind") == "grid":
-        grid_events(plan, buf, P, rng, samples, events, t_of)
-    xs = [h["plane_point"][0] + h["offset"][0] for h in plan.get("hits", [])] or [0]
-    span = max(0.05, max(abs(min(xs)), abs(max(xs))))
-
-    # Dense strokes cut several pieces in the same frame: one richer sound per frame
-    # instead of hundreds of stacked transients (which would turn into white noise).
-    groups = {}
-    for h in plan.get("hits", []):
-        groups.setdefault(h["contact_frame"], []).append(h)
-    root_vol = max(1e-9, plan["pieces"][0]["volume"]) if plan.get("pieces") else 1.0
-    for cf in sorted(groups):
-        g = groups[cf]
-        h = g[0]
-        nh = len(g)
-        t0, t1 = t_of(h["contact_frame"]), t_of(h["exit_frame"])
-        dur = max(0.03, t1 - t0)
-        px = float(np.mean([x["plane_point"][0] + x["offset"][0] for x in g]))
-        pan = float(np.clip(px / span * 0.6, -0.7, 0.7))
-        size = (sum(x["piece_volume"] for x in g) / root_vol) ** (1 / 3)
-        loud = min(1.0, 0.55 + 0.45 * size)   # small pieces are quieter
-        loud *= 1.0 if nh == 1 else min(1.25, 0.8 + 0.12 * np.log2(nh))
-        var = rng.uniform(0.85, 1.15)
-
-        # 1. blade contact
-        c = P["contact"]
-        y = pick(samples, "contact", rng)
-        if y is None:
-            n = int(SR * c["dur"] * rng.uniform(0.8, 1.3))
-            y = bandnoise(rng, n, *c["band"]) * env_ad(n, 0.05, 3)
-        place(buf, t0, y, pan, c["gain"] * loud * var)
-        events.append({"t": t0, "type": "contact", "hit": h["piece"]})
-
-        # 2+3. penetration then traversal (one continuous body, swelling in)
-        b = P["body"]
-        y = pick(samples, "body", rng)
-        if y is None:
-            n = int(SR * dur)
-            body = bandnoise(rng, n, *b["band"]) * b["gain"]
-            sq = bandnoise(rng, n, *b["squish"]) * b["squish_gain"]
-            sq *= 0.6 + 0.4 * np.sin(np.linspace(0, np.pi * rng.uniform(2, 5), n)) ** 2
-            cr = np.zeros(n)
-            k = rng.poisson(b["crackle"] * dur * (1 + 0.5 * np.log2(nh)))
-            for pos in rng.integers(0, max(1, n - 200), size=k):
-                m = int(rng.integers(40, 160))
-                cr[pos:pos + m] += rng.standard_normal(m) * np.exp(-np.arange(m) / 25)
-            cr = signal.sosfilt(signal.butter(2, [1500, 6500], "band", fs=SR, output="sos"), cr)
-            y = (body + sq + cr * b["crackle_gain"])
-            e = np.minimum(1, np.linspace(0, 1, n) * 4) * (0.7 + 0.3 * np.linspace(1, 0.6, n))
-            y = y * e
-        place(buf, t0 + 0.004, y, pan, loud * var)
-        events.append({"t": t0 + 0.004, "type": "penetration", "hit": h["piece"]})
-        events.append({"t": t0 + dur * 0.3, "type": "traversal", "hit": h["piece"]})
-
-        # 4. end of cut: blade meets the board
-        e_ = P["end"]
-        y = pick(samples, "end", rng)
-        if y is None:
-            y = tone(rng, e_["f0"], e_["decay"])
-            m = int(SR * 0.004)
-            y[:m] += rng.standard_normal(m) * e_["click"] * env_ad(m, 0.05, 2)
-        place(buf, t1, y, pan, e_["gain"] * (0.7 + 0.3 * loud) * var)
-        events.append({"t": t1, "type": "end_of_cut", "hit": h["piece"]})
-
-        # 5. separation of the two (or more) parts
-        s = P["separate"]
-        y = pick(samples, "separate", rng)
-        if y is None:
-            n = int(SR * s["dur"] * rng.uniform(0.8, 1.2))
-            y = bandnoise(rng, n, *s["band"]) * env_ad(n, 0.2, 2)
-        place(buf, t1 + 0.02, y, pan, s["gain"] * loud)
-        events.append({"t": t1 + 0.02, "type": "separation", "hit": h["piece"]})
-
-        # 6. parts settle on the board
-        l = P["land"]
-        y = pick(samples, "land", rng)
-        if y is None:
-            y = tone(rng, l["f0"], l["decay"]) * 0.8
-            y = signal.sosfilt(signal.butter(2, 900, "low", fs=SR, output="sos"), y)
-        land_t = t1 + 0.3 * rng.uniform(0.7, 1.1)
-        place(buf, land_t, y, pan, l["gain"] * loud)
-        events.append({"t": land_t, "type": "surface_contact", "hit": h["piece"]})
+    grid_events(plan, buf, P, rng, samples, events, t_of)
 
     # small, close "kitchen" room: short decaying-noise impulse response
     ir_n = int(SR * 0.09)

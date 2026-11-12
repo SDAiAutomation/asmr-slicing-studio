@@ -14,17 +14,14 @@ on:
         description: "Légende TikTok/Instagram (déposée sur Drive à côté du MP4)"
         default: ""
       object_type:
-        description: "Objet (mango, soap, jelly, chocolate)"
-        default: "mango"
-      target_piece_count:
-        description: "Nombre final de morceaux"
-        default: "15"
-      cutting_mode:
-        description: "cumulative ou levels"
-        default: "cumulative"
+        description: "Objet (steak, cake, mango ; soap, jelly, chocolate non validés)"
+        default: "steak"
+      cuts_sequence:
+        description: "Coupes par niveau, séparées par des virgules (format grid N CUTS -> X CUBES)"
+        default: "3,8,20,45,90,160,300,500,750,1000"
       quality:
-        description: "preview (540x960, rapide) ou final (1080x1920)"
-        default: "preview"
+        description: "preview (540x960), hd (720x1280 upscalé 1080x1920) ou final (1080x1920)"
+        default: "hd"
       random_seed:
         description: "Seed (vide = aléatoire)"
         default: "42"
@@ -58,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-blender
-      - name: Tests (incl. real Blender geometry, 15 pieces)
+      - name: Tests (incl. real Blender grid build)
         run: python -m pytest tests -q
 
       - name: Config
@@ -82,15 +79,10 @@ jobs:
               ok = [r for r in rows if r.get("status") == "ok"]
               if ok and not allow_repeat:
                   last = ok[-1]
-                  # older rows have no "format": grid runs always logged target_piece_count = 2
-                  last_format = last.get("format") or ("grid" if last.get("pieces") == 2 else "slices")
-                  fmt = cfg.get("format", "slices")
-                  seq = cfg.get("cuts_sequence") or cfg.get("progression_sequence")
+                  seq = cfg.get("cuts_sequence")
                   problems = []
                   if cfg.get("object_type") == last.get("object"):
                       problems.append(f"same object as last video ({last.get('object')})")
-                  if fmt == "grid" and last_format == "grid":
-                      problems.append("grid two days in a row")
                   if seq and seq == last.get("sequence"):
                       problems.append("same sequence as last video")
                   if problems:
@@ -98,12 +90,11 @@ jobs:
           else:
               seed = "${{ inputs.random_seed }}".strip()
               cfg = {
-                "object_type": "${{ inputs.object_type || 'mango' }}",
-                "target_piece_count": int("${{ inputs.target_piece_count || '15' }}"),
-                "cutting_mode": "${{ inputs.cutting_mode || 'cumulative' }}",
+                "object_type": "${{ inputs.object_type || 'steak' }}",
+                "cuts_sequence": [int(x) for x in "${{ inputs.cuts_sequence }}".replace(" ", "").split(",") if x],
                 "random_seed": int(seed) if seed else random.randint(1, 10**6),
               }
-              quality = "${{ inputs.quality || 'preview' }}"
+              quality = "${{ inputs.quality || 'hd' }}"
           if quality == "hd":  # sharper than preview, still fits the free CPU runners
               cfg.setdefault("preview_resolution", [720, 1280])
               cfg.setdefault("preview_samples", 20)
@@ -111,11 +102,15 @@ jobs:
               cfg.setdefault("export_resolution", [1080, 1920])
           # TikTok only pays (Creator Rewards) for videos over 1 minute: aim for 62 s unless set
           cfg.setdefault("video_duration", 62)
-          n = cfg["target_piece_count"]
-          cfg.update({"render_engine": "cycles", "output_path": "runs",
-                      "cycles_samples": 48 if n <= 500 else (32 if n <= 5000 else 20)})
+          # only one format exists now: drop keys of the removed slices / levitate formats
+          if cfg.pop("format", "grid") != "grid":
+              raise SystemExit("Only the grid format exists (slices and levitate were removed)")
+          for k in ("target_piece_count", "cutting_mode", "progression_sequence"):
+              cfg.pop(k, None)
+          cfg.update({"render_engine": "cycles", "output_path": "runs", "cycles_samples": 48})
           json.dump(cfg, open("ci_config.json", "w"), indent=1)
-          tag = f"{cfg['object_type']}-{n}p"
+          n = max(cfg.get("cuts_sequence") or [0])
+          tag = f"{cfg['object_type']}-{n}cuts"
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"quality={quality}\ntag={tag}\n")
           print(cfg, quality)
@@ -246,8 +241,7 @@ jobs:
           printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
           REMOTE=$(rclone listremotes | head -1)
           # name = date_object_format_run ; tests stay apart from publishable videos
-          FMT=$(python3 -c 'import json; print(json.load(open("work/ci_config.json")).get("format", "slices"))')
-          NAME="$(date -u +%Y-%m-%d)_${VIDEO_TAG%-*}_${FMT}_run${GITHUB_RUN_NUMBER}"
+          NAME="$(date -u +%Y-%m-%d)_${VIDEO_TAG}_grid_run${GITHUB_RUN_NUMBER}"
           DEST="A publier"
           if [ "$GITHUB_REF_NAME" != "main" ] || grep -qiw test work/caption.txt 2>/dev/null; then DEST="Tests"; fi
           rclone copyto work/*.mp4 "${REMOTE}${DEST}/${NAME}.mp4" --drive-root-folder-id "$DRIVE_FOLDER_ID"
@@ -280,10 +274,9 @@ jobs:
           row = {"date": datetime.datetime.utcnow().isoformat(timespec="minutes") + "Z",
                  "run": int(os.environ["GITHUB_RUN_ID"]), "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
                  "status": "ok" if exp.get("ok") else "failed",
-                 "format": cfg.get("format", "slices"),
-                 "sequence": cfg.get("cuts_sequence") or cfg.get("progression_sequence"),
-                 "object": cfg.get("object_type"), "pieces": cfg.get("target_piece_count"),
-                 "mode": cfg.get("cutting_mode"), "seed": cfg.get("random_seed"),
+                 "format": "grid",
+                 "sequence": cfg.get("cuts_sequence"),
+                 "object": cfg.get("object_type"), "seed": cfg.get("random_seed"),
                  "hook": cfg.get("hook_text", ""), "end_text": cfg.get("end_text", ""), "caption": cap,
                  "validated_pieces": rep.get("final_pieces_validated"),
                  "duration_s": exp.get("duration_s"), "size_mb": exp.get("size_mb"),
