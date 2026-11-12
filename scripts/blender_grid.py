@@ -19,7 +19,7 @@ import numpy as np
 from mathutils import Vector
 
 import blender_build as B
-from common import MATERIALS, OBJECTS, grid_occupancy
+from common import MATERIALS, OBJECTS, grid_fit
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +271,10 @@ def steak_materials(M):
     return [fat, meat_mat(M), fat]
 
 
+def seam_half_width(cell):
+    return min(0.0009, 0.3 * min(cell))
+
+
 def add_seams(mat, P, nodes_out, colour=(0.03, 0.006, 0.004, 1)):
     """Darken thin lines at the planned cut positions whose cut is already made.
     P: dict name -> Value node (lo_x.., cell_x.., n_x, n_y, n_z, cz, w)."""
@@ -458,6 +462,11 @@ def collapse_group(mat):
     iop = N.new("GeometryNodeInstanceOnPoints")
     L.new(sp.outputs["Geometry"], iop.inputs["Points"])
     L.new(sm.outputs["Geometry"], iop.inputs["Instance"])
+    # edge cells hold only part of a rounded object: trim each cube to its real chunk
+    fit = N.new("GeometryNodeInputNamedAttribute")
+    fit.data_type = "FLOAT_VECTOR"
+    fit.inputs["Name"].default_value = "fit"
+    L.new([o for o in fit.outputs if o.enabled][0], iop.inputs["Scale"])
     L.new(iop.outputs["Instances"], go.inputs["Geometry"])
     ids = {it.name: it.identifier for it in I.items_tree
            if getattr(it, "item_type", "SOCKET") == "SOCKET" and it.in_out == "INPUT"}
@@ -465,9 +474,12 @@ def collapse_group(mat):
 
 
 def cells(shape, lvl):
-    """Occupied cell centres, their kind (0 flesh / 1 skin-fat) and a surface flag."""
+    """Occupied cells: centre of the chunk each one really holds, its size (fraction of the
+    cell per axis), its kind (0 flesh / 1 skin-fat) and a surface flag."""
     lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
-    occ, axes = grid_occupancy(shape, lo, ext, n)
+    occ, offset, size = grid_fit(shape, lo, ext, n)
+    cell = ext / n
+    axes = [lo[a] + (np.arange(n[a]) + 0.5) * cell[a] for a in range(3)]
     Y, Z = np.meshgrid(axes[1], axes[2], indexing="ij")
     inner = occ.copy()
     for a in range(3):
@@ -485,17 +497,18 @@ def cells(shape, lvl):
     else:
         kind = surf.astype(np.float32)
     idx = np.nonzero(occ)
-    co = np.stack([axes[0][idx[0]], axes[1][idx[1]], axes[2][idx[2]]], 1).astype(np.float32)
-    return co, kind[idx].astype(np.float32), surf[idx]
+    co = np.stack([axes[0][idx[0]], axes[1][idx[1]], axes[2][idx[2]]], 1)
+    co = (co + offset[idx] * cell).astype(np.float32)
+    return co, kind[idx].astype(np.float32), surf[idx], size[idx].astype(np.float32)
 
 
-def display_subset(co, kinds, surf, budget, seed):
+def display_subset(co, kinds, surf, fit, budget, seed):
     """Render-time budget: above `budget` cubes, keep every surface cube plus a random
     share of the hidden interior ones. The counter still shows the exact total; cubes
     this small are below one pixel, so the picture does not change."""
     n = len(co)
     if n <= budget:
-        return co, kinds
+        return co, kinds, fit
     rng = np.random.default_rng(seed)
     s_idx = np.flatnonzero(surf)
     i_idx = np.flatnonzero(~surf)
@@ -505,10 +518,10 @@ def display_subset(co, kinds, surf, budget, seed):
         extra = rng.choice(i_idx, min(len(i_idx), budget - len(s_idx)), replace=False)
         keep = np.concatenate([s_idx, extra])
     keep.sort()
-    return co[keep], kinds[keep]
+    return co[keep], kinds[keep], fit[keep]
 
 
-def cubes_object(name, co, kinds, ng, ids, size, height, mat):
+def cubes_object(name, co, kinds, fit, ng, ids, size, height, mat):
     me = bpy.data.meshes.new(name)
     me.vertices.add(len(co))
     me.vertices.foreach_set("co", co.ravel())
@@ -516,6 +529,8 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
     att.data.foreach_set("value", kinds)
     org = me.attributes.new("orig", "FLOAT_VECTOR", "POINT")  # original position -> shading
     org.data.foreach_set("vector", co.ravel())
+    ft = me.attributes.new("fit", "FLOAT_VECTOR", "POINT")    # chunk size inside its cell
+    ft.data.foreach_set("vector", fit.ravel())
     me.update()
     ob = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(ob)
@@ -553,7 +568,7 @@ def build_grid_scene(plan, out_dir):
     params = {}
     seam_sets = []
     for mt in {id(m): m for m in mats}.values():
-        add_seams(mt, {}, seam_sets)
+        add_seams(mt, {}, seam_sets, (*M["seam"], 1))
     me = object_mesh(shape, "Object")
     for mt in mats:
         me.materials.append(mt)
@@ -597,7 +612,9 @@ def build_grid_scene(plan, out_dir):
             key_param(f"cell_{ax}", start, cell[ax])
             key_param(f"n_{ax}", start, 0)
         key_param("cz", start, lvl["cuts_xyz"][2])
-        key_param("w", start, min(0.0006, 0.09 * min(cell)))
+        # half-width of a cut line: ~2 px at the first levels; once cells are smaller than a
+        # pixel the lines merge into a tint that visibly sweeps across the object as it is cut
+        key_param("w", start, seam_half_width(cell))
 
         ob = bpy.data.objects.new(f"Level_{li:02d}", me)
         scn.collection.objects.link(ob)
@@ -618,12 +635,12 @@ def build_grid_scene(plan, out_dir):
 
         # cubes
         t_l = time.time()
-        co, kinds, surf = cells(shape, lvl)
+        co, kinds, surf, fit = cells(shape, lvl)
         if len(co) != lvl["cubes"]:
             report["failures"].append({"level": li, "planned": lvl["cubes"], "built": int(len(co))})
         built = int(len(co))
-        co, kinds = display_subset(co, kinds, surf, int(cfg.get("display_cubes_max", 1200000)), li)
-        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
+        co, kinds, fit = display_subset(co, kinds, surf, fit, int(cfg.get("display_cubes_max", 1200000)), li)
+        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, fit, ng, ids, cell, height, cmat)
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
         B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])

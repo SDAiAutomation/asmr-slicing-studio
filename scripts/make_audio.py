@@ -193,6 +193,19 @@ def grid_events(plan, buf, P, rng, samples, events, t_of):
         place(buf, t_of(c), chop(rng, P, samples, dur, nh), pan, gain)
         events.append({"t": t_of(c), "type": "contact", "frame": c, "strokes": nh})
         events.append({"t": t_of(x), "type": "end_of_cut", "frame": x, "strokes": nh})
+    # fast passes carry many cuts: the counter keeps climbing after the chop, so each extra
+    # cut gets a short, quiet blade tick on its own frame (one per frame at most)
+    contacts = {bs["time"]["contact"] for bs in plan.get("blade_strokes", [])}
+    per_frame = {}
+    for st in plan.get("strokes", []):
+        if st["frame"] not in contacts:
+            per_frame[st["frame"]] = per_frame.get(st["frame"], 0) + 1
+    t_band = P["contact"]["band"]
+    for f, k in sorted(per_frame.items()):
+        m = int(SR * 0.012)
+        y = bandnoise(rng, m, t_band[0] * 0.8, t_band[1]) * env_ad(m, 0.02, 4)
+        place(buf, t_of(f), y, rng.uniform(-0.3, 0.3), 0.18 * min(1.6, 1 + 0.15 * np.log2(k)))
+        events.append({"t": t_of(f), "type": "tick", "frame": f, "cuts": k})
     for lvl in plan["levels"]:
         t0, t1 = t_of(lvl["collapse_start"]), t_of(lvl["collapse_end"])
         n = int(SR * (t1 - t0 + 0.4))
