@@ -201,6 +201,30 @@ def body_frames(st):
     return retract_frames(st) + 2 + 8
 
 
+def fast_frames(st):
+    """Shortest stroke the blade can make at full speed (fast phases of a level)."""
+    travel = st["s_end"] - st["s_ready"]
+    back = max(2, int(math.ceil(1.5 * travel / VMAX)))
+    fwd = max(4, int(math.ceil(1.5 * travel / VMAX)) + 2)
+    return fwd + back
+
+
+def quick_timing(a, b, st):
+    """Compressed stroke in [a, b] when there is no room for the full, natural one:
+    the blade goes straight through at full speed and snaps back (cut rate > ~2/s)."""
+    travel = st["s_end"] - st["s_ready"]
+    back = max(2, int(math.ceil(1.5 * travel / VMAX)))
+    r = b - 1
+    sep_end = r - back
+    x = sep_end - 1
+    c = a + max(1, round((x - a) * 0.3))
+    c = min(c, x - 1)
+    pen = c + max(0, (x - c) // 3)
+    pen = min(pen, x - 1)
+    return {"ready": a, "contact": c, "pen_end": pen, "exit": x,
+            "sep_end": sep_end, "retract_end": r, "slot": [a, b], "fast": True}
+
+
 def transit_frames(p0, q0, p1, q1, centre, safe_r):
     """Frames needed to fly between two ready poses without exceeding the speed limits."""
     centre = np.asarray(centre, float)

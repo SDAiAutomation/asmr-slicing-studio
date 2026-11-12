@@ -40,6 +40,42 @@ def split_cuts(ext, C):
     return cuts
 
 
+FIRST_CUT_S = 0.5   # every level opens on calm, clearly separate strokes
+
+
+def level_seconds(C):
+    """Cutting time of a level: grows slowly with the cut count (the rate does the rest)."""
+    return 1.3 + 0.8 * math.log2(C + 1)
+
+
+def cut_schedule(n, frames, first, ramp=0.6):
+    """Frame offsets at which cut 1..n completes. Each level opens on one cut every
+    `first` frames (calm, clearly separate strokes); the rate then grows exponentially
+    for the first `ramp` of the level and holds its top speed until the end, so the
+    counter accelerates and then races, like a chef speeding up."""
+    if n < 2:
+        return [float(frames)]
+    r0 = 1.0 / first
+    t = np.linspace(0.0, frames, 4001)
+
+    def done(a):
+        t1 = ramp * frames
+        up = r0 * np.expm1(a * np.minimum(t, t1)) / a
+        return up + r0 * math.exp(a * t1) * np.maximum(0.0, t - t1)
+
+    if r0 * frames >= n:          # small level: even pacing already fits
+        return (np.arange(1, n + 1) * frames / n).tolist()
+    lo_a, hi_a = 1e-6, 2.0
+    for _ in range(60):
+        a = (lo_a + hi_a) / 2
+        if done(a)[-1] < n:
+            lo_a = a
+        else:
+            hi_a = a
+    c = done(hi_a)
+    return np.interp(np.arange(1, n + 1), c, t).tolist()
+
+
 _OCC = {}
 
 
@@ -87,6 +123,7 @@ def _plan(cfg, ts=1.0):
     yaws = [-0.32, 0.42, -0.5, 0.24]
     safe_r = radius * 1.25 + 0.03
     prev_ready = None
+    last_end = 0
     frame = 1
     intro = int(0.4 * fps)   # first cut within half a second: the hook is the action itself
     for li, C in enumerate(cfg["cuts_sequence"]):
@@ -101,75 +138,72 @@ def _plan(cfg, ts=1.0):
         start = frame
         enter = max(6, int(0.45 * fps * ts)) if li else 0
         f = frame + enter + (intro if li == 0 else int(0.25 * fps))
-        dur = max(int(0.5 * fps), int(round(ts * fps * min(4.5, max(1.0, 1.0 + 0.55 * math.log2(C / 4 + 1))))))
         # stroke order: X cuts left->right, then Y cuts front->back, then Z (horizontal)
         order = [(0, k) for k in range(1, cuts[0] + 1)] + \
                 [(1, k) for k in range(1, cuts[1] + 1)] + \
                 [(2, k) for k in range(cuts[2], 0, -1)]
-        # Visible blade passes: one per cut while it stays readable, then each pass stands for
-        # a group of neighbouring cuts (they appear while the blade crosses the object).
-        min_slot = max(10, int(0.42 * fps))
         n_cuts = max(1, len(order))
-        readable = n_cuts <= 20   # every cut gets its own, unhurried blade pass
-        if readable:
-            min_slot = max(min_slot, int(0.6 * fps))
-        visible = n_cuts if readable else min(n_cuts, max(1, dur // min_slot))
+        targets = cut_schedule(n_cuts, level_seconds(C) * ts * fps, FIRST_CUT_S * fps)
         yaw = yaws[li % 4] if levitate else 0.0
         pose = KT.Pose(yaw, centre, height / 2)
         cut_frames = [f] * n_cuts
         cut_group = [0] * n_cuts
-        groups = [g for g in np.array_split(np.arange(n_cuts), visible) if len(g)]
-        lvl_blades, planned = [], []
-        for gi, g in enumerate(groups):
-            mid = int(g[len(g) // 2])
-            ax, k = order[mid]
+        lvl_blades = []
+
+        def stroke_for(j):
+            ax, k = order[j]
             p_obj = (lo + ext / 2).copy()
             p_obj[ax] = lo[ax] + ext[ax] * k / n[ax]
             normal = np.zeros(3)
             normal[ax] = 1.0
-            st = KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
-            if st is None:   # a plane grazing the outline: try the group's other planes
-                for alt in g:
-                    ax, k = order[int(alt)]
-                    p_obj = (lo + ext / 2).copy()
-                    p_obj[ax] = lo[ax] + ext[ax] * k / n[ax]
-                    normal = np.zeros(3)
-                    normal[ax] = 1.0
-                    st = KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
-                    if st is not None:
-                        break
-            if st is not None:
-                st.update(level=li, axis=int(ax), group_cuts=len(g), resistance=resistance)
-            planned.append((g, st))
-        # timing: each pass gets the frames it needs (flight between planes + its own stroke),
-        # any spare time of the level is shared out so the pacing stays even
-        needs = []
-        for g, st in planned:
-            if st is None:
-                needs.append((0, min_slot))
+            return KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
+
+        # One real blade pass per cut while the rhythm allows it. The cut rate accelerates
+        # through the level; once it outruns the fastest possible stroke, each pass takes
+        # every cut that is due before it leaves the object (the counter still climbs 1 by 1).
+        cursor, j, gi = f, 0, 0
+        passes = []
+        while j < n_cuts:
+            st = stroke_for(j)
+            if st is None:   # plane grazing the outline: the cut lands without its own pass
+                cut_frames[j] = int(round(max(cursor, f + targets[j])))
+                cut_group[j] = gi
+                cursor = cut_frames[j]
+                j, gi = j + 1, gi + 1
                 continue
             p1, q1 = KT.ready_pose(st)
             fly = KT.transit_frames(prev_ready[0], prev_ready[1], p1, q1, centre, safe_r) if prev_ready else 0
-            body = max(min_slot, KT.body_frames(st))
-            needs.append((fly, body))
-            prev_ready = (p1, q1)
-        dur = max(dur, sum(a + b for a, b in needs))
-        spare = dur - sum(a + b for a, b in needs)
-        cursor = f
-        for gi, ((g, st), (fly, body)) in enumerate(zip(planned, needs)):
-            body += spare // len(planned) + (1 if gi < spare % len(planned) else 0)
-            ready = cursor + fly
-            end = ready + body
-            if st is not None:
-                st["time"] = KT.timing(ready, end, resistance, KT.retract_frames(st))
-                lvl_blades.append(st)
-                c0, x0 = st["time"]["contact"], st["time"]["exit"]
+            ready = max(cursor, last_end + fly)   # the blade flies in during the transition
+            end = max(ready + KT.fast_frames(st), int(round(f + targets[j])) + 3)
+            if end - ready >= KT.body_frames(st):
+                tm = KT.timing(ready, end, resistance, KT.retract_frames(st))
             else:
-                c0, x0 = ready, ready
-            for q, j in enumerate(g):
-                cut_frames[int(j)] = int(round(c0 + (x0 - c0) * (q + 1) / len(g)))
-                cut_group[int(j)] = gi
-            cursor = end
+                tm = KT.quick_timing(ready, end, st)
+            k = j + 1
+            while k < n_cuts and f + targets[k] <= end and order[k][0] == order[j][0]:
+                k += 1
+            g = list(range(j, k))
+            st.update(level=li, axis=int(order[j][0]), group_cuts=len(g),
+                      resistance=resistance, time=tm)
+            lvl_blades.append(st)
+            passes.append((g, tm))
+            for jj in g:
+                cut_group[jj] = gi
+            prev_ready = (p1, q1)
+            cursor, j, gi, last_end = end, k, gi + 1, end
+        # The counter climbs one cut at a time: a single cut lands as the edge leaves the
+        # object; a fast pass carrying many cuts keeps them coming, one per frame or more,
+        # until the next pass touches the object, so the count never jumps by a block.
+        for i, (g, tm) in enumerate(passes):
+            c0, x0 = tm["contact"], tm["exit"]
+            if len(g) <= x0 - c0 + 1:
+                span_end = x0
+            else:
+                span_end = passes[i + 1][1]["contact"] - 1 if i + 1 < len(passes) else tm["retract_end"]
+            for q, jj in enumerate(g):
+                cut_frames[jj] = int(round(c0 + (span_end - c0) * (q + 1) / len(g)))
+        cut_frames = np.maximum.accumulate(np.asarray(cut_frames, int)).tolist()
+        dur = cursor - f
         blade_strokes.extend(lvl_blades)
         active = [0, 0, 0]
         z_done = 0
