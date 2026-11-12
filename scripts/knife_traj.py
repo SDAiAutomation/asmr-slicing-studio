@@ -387,17 +387,21 @@ def chop_keys(blades, centre, safe_r, prev=None):
     return keys
 
 
-def close_loop(keys, first, last, total, centre, safe_r):
-    """After the last stroke: lift out, then fly back to the opening pose (seamless loop)."""
+def close_loop(keys, first, last, total, centre, safe_r, fps=24):
+    """After the last stroke: lift out of its cut, park the knife high out of frame while the
+    pieces fall (it never covers the result or the counters), then come back down to the
+    opening pose for a seamless loop."""
     R0, _, _, _, q0 = _stroke_poses(first)
     R, _, _, _, q = _stroke_poses(last)
     t0 = last["time"]["sep_end"]
     out = list(keys)
-    out.append(_key(t0 + 4, R, q))
-    t1 = t0 + 4
-    for u in np.linspace(0, 1, 12)[1:]:
-        p, qq = _transit(R, q, R0, q0, centre, safe_r, float(u))
-        out.append(_key(t1 + (total - t1) * u, p, qq))
+    out.append(_key(t0 + 3, R, q))
+    up = np.array([0.0, 0.0, 0.45])
+    park_in = t0 + 3 + 0.35 * fps
+    park_out = max(park_in + 1, total - 0.9 * fps)
+    out.append(_key(park_in, R + up, q))
+    out.append(_key(park_out, R0 + up, q0))
+    out.append(_key(total, R0, q0))
     out.sort(key=lambda k: k[0])
     clean, last_t = [], -1e9
     for k in out:                          # strictly increasing times, continuous quaternions

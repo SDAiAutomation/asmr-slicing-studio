@@ -139,9 +139,11 @@ def _plan(cfg, ts=1.0):
         enter = max(6, int(0.45 * fps * ts)) if li else 0
         f = frame + enter + (intro if li == 0 else int(0.25 * fps))
         # stroke order: X cuts left->right, then Y cuts front->back, then Z (horizontal)
+        # X cuts left->right, Z (horizontal) top->bottom, then Y front->back LAST: every Y
+        # stroke frees a slab of finished cubes that falls right away (progressive cascade)
         order = [(0, k) for k in range(1, cuts[0] + 1)] + \
-                [(1, k) for k in range(1, cuts[1] + 1)] + \
-                [(2, k) for k in range(cuts[2], 0, -1)]
+                [(2, k) for k in range(cuts[2], 0, -1)] + \
+                [(1, k) for k in range(1, cuts[1] + 1)]
         n_cuts = max(1, len(order))
         pose = KT.Pose(0.0, centre, height / 2)
 
@@ -239,7 +241,10 @@ def _plan(cfg, ts=1.0):
                "strokes_start": f, "strokes_end": f + dur, "collapse_start": f_end,
                "collapse_end": f_end + collapse, "exit_start": f_end + collapse + hold,
                "end_frame": f_end + collapse + hold + exit_f,
-               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist()}
+               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(),
+               # (frame, y) of each Y stroke: cubes in front of y are free and fall
+               "release": [[cut_frames[j], float(lo[1] + ext[1] * order[j][1] / n[1])]
+                           for j in range(len(order)) if order[j][0] == 1]}
         pieces_ev.append((f_end, cubes, li))
         levels.append(lvl)
         strokes.extend(lvl_strokes)
@@ -248,7 +253,7 @@ def _plan(cfg, ts=1.0):
     # so the last frame flows into the first one when TikTok/Reels replays the video
     loop_in = frame
     total = frame + int(1.0 * fps)
-    keys = KT.close_loop(knife_keys, first_blade, prev_blade, total, centre, safe_r) if first_blade else []
+    keys = KT.close_loop(knife_keys, first_blade, prev_blade, total, centre, safe_r, fps) if first_blade else []
     return {
         "version": 3, "kind": "grid", "config": cfg, "fps": fps,
         "total_frames": int(total), "duration_s": total / fps,

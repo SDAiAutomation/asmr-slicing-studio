@@ -60,7 +60,9 @@ def test_counter_climbs_by_one_at_each_contact(p):
 def test_keys_are_continuous(p):
     k = np.array(p["knife_keys"])
     assert (np.diff(k[:, 0]) > 0).all()
-    assert np.linalg.norm(np.diff(k[:, 1:4], axis=0), axis=1).max() < 0.35
+    step = np.linalg.norm(np.diff(k[:, 1:4], axis=0), axis=1)
+    dt = np.diff(k[:, 0])
+    assert ((step < 0.35) | (step / dt < 0.06)).all(), "no jump: long moves are slow ones"
     assert (np.sum(k[1:, 4:] * k[:-1, 4:], axis=1) > 0).all(), "shortest-path quaternions"
 
 

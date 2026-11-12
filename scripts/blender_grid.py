@@ -399,6 +399,8 @@ def collapse_group(mat):
     I = ng.interface
     I.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
     I.new_socket(name="Collapse", in_out="INPUT", socket_type="NodeSocketFloat")
+    I.new_socket(name="Front", in_out="INPUT", socket_type="NodeSocketFloat")
+    I.new_socket(name="Band", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="CubeSize", in_out="INPUT", socket_type="NodeSocketVector")
     I.new_socket(name="Height", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
@@ -423,7 +425,11 @@ def collapse_group(mat):
                 L.new(x, n.inputs[i])
         return n.outputs[0]
 
-    col, H = gi.outputs["Collapse"], gi.outputs["Height"]
+    H = gi.outputs["Height"]
+    # each cube falls once the knife has freed it: progress grows with the distance between
+    # the cutting front (last Y stroke) and the cube; "Collapse" finishes everything at the end
+    freed = m("DIVIDE", m("SUBTRACT", gi.outputs["Front"], sep.outputs["Y"]), m("MAXIMUM", gi.outputs["Band"], 1e-5))
+    col = m("MAXIMUM", gi.outputs["Collapse"], m("MINIMUM", m("MAXIMUM", freed, 0.0), 1.0))
     # cubes sink towards the board (pile keeps ~25-30 % of its height)...
     dz = m("MULTIPLY", m("MULTIPLY", col, -1.0), m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.22, 0.62)))
     # ...and the upper ones slide outwards
@@ -447,17 +453,21 @@ def collapse_group(mat):
     L.new(gi.outputs["Geometry"], sp.inputs["Geometry"])
     L.new(add.outputs[0], sp.inputs["Offset"])
     cube = N.new("GeometryNodeMeshCube")
-    sz = N.new("ShaderNodeVectorMath")
-    sz.operation = "SCALE"
-    L.new(gi.outputs["CubeSize"], sz.inputs[0])
-    sz.inputs["Scale"].default_value = 0.9
-    L.new(sz.outputs[0], cube.inputs["Size"])
+    L.new(gi.outputs["CubeSize"], cube.inputs["Size"])
+    # cubes still attached (not yet freed by a Y stroke) stay joined along Y: only the cuts
+    # already made show as gaps; once freed every cube shrinks to its separated 0.9 size
+    ysc = m("SUBTRACT", 1.0, m("MULTIPLY", col, 0.1))
+    isc = N.new("ShaderNodeCombineXYZ")
+    isc.inputs[0].default_value = 0.9
+    isc.inputs[2].default_value = 0.9
+    L.new(ysc, isc.inputs[1])
     sm = N.new("GeometryNodeSetMaterial")
     L.new(cube.outputs["Mesh"], sm.inputs["Geometry"])
     sm.inputs["Material"].default_value = mat
     iop = N.new("GeometryNodeInstanceOnPoints")
     L.new(sp.outputs["Geometry"], iop.inputs["Points"])
     L.new(sm.outputs["Geometry"], iop.inputs["Instance"])
+    L.new(isc.outputs[0], iop.inputs["Scale"])
     L.new(iop.outputs["Instances"], go.inputs["Geometry"])
     ids = {it.name: it.identifier for it in I.items_tree
            if getattr(it, "item_type", "SOCKET") == "SOCKET" and it.in_out == "INPUT"}
@@ -524,6 +534,8 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
     mod[ids["CubeSize"]] = list(size)
     mod[ids["Height"]] = float(height)
     mod[ids["Collapse"]] = 0.0
+    mod[ids["Front"]] = -10.0
+    mod[ids["Band"]] = 0.01
     me.materials.append(mat)
     return ob, mod
 
@@ -621,7 +633,9 @@ def build_grid_scene(plan, out_dir):
 
         ob = bpy.data.objects.new(f"Level_{li:02d}", me)
         scn.collection.objects.link(ob)
-        B.set_visibility(ob, start, lvl["collapse_start"])
+        release = lvl.get("release") or []
+        swap = release[0][0] if release else lvl["collapse_start"]   # object -> cube grid
+        B.set_visibility(ob, start, swap)
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
         ob.keyframe_insert("location", frame=start)
@@ -646,7 +660,16 @@ def build_grid_scene(plan, out_dir):
         cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
-        B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
+        B.set_visibility(cob, swap, lvl["end_frame"])
+        if release:
+            fpath = f'modifiers["GN"]["{ids["Front"]}"]'
+            mod[ids["Band"]] = float(4 * cell[1])
+            B.interp("LINEAR")
+            mod[ids["Front"]] = float(lvl["lo"][1])
+            cob.keyframe_insert(data_path=fpath, frame=swap - 1)
+            for fr, y in release:
+                mod[ids["Front"]] = float(y)
+                cob.keyframe_insert(data_path=fpath, frame=fr)
         cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
         B.interp("BEZIER")
@@ -706,7 +729,8 @@ def grid_camera(plan, lo, hi, board_size):
     vfov = 2 * math.atan(18 / 50)
     hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
     half_w = board_size[0] / 2 / 0.92
-    elev, azim = math.radians(34), math.radians(-90)
+    # three-quarter view: blades in every cutting direction show their flat, not just their edge
+    elev, azim = math.radians(34), math.radians(-62)
     view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
     target = Vector((0, 0.01, 0.01))
     dist = half_w / math.tan(hfov / 2)
