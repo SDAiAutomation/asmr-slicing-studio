@@ -18,8 +18,15 @@ runs:
       run: |
         S="${BLENDER_SERIES:-4.5}"
         URL="https://download.blender.org/release/Blender${S}/"
-        F=$(curl -fsSL "$URL" | grep -oE "blender-${S}\.[0-9]+-linux-x64\.tar\.xz" | sort -V | tail -1)
-        test -n "$F" || { echo "No Blender build found for $S"; exit 1; }
+        # ~20 render jobs start together and download.blender.org answers some of them 403:
+        # retry with jitter, and fall back to any cached build of the series
+        F=""
+        for i in 1 2 3 4 5 6; do
+          F=$(curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 "$URL" 2>/dev/null \
+              | grep -oE "blender-${S}\.[0-9]+-linux-x64\.tar\.xz" | sort -V | tail -1) && [ -n "$F" ] && break
+          sleep $((RANDOM % 15 + 5 * i))
+        done
+        test -n "$F" || { echo "Blender listing unreachable: using the cached ${S} build"; F="blender-${S}-cached"; }
         echo "file=$F" >> "$GITHUB_OUTPUT"
         echo "url=${URL}${F}" >> "$GITHUB_OUTPUT"
     - name: Cache Blender
@@ -28,12 +35,19 @@ runs:
       with:
         path: ~/blender
         key: ${{ steps.bl.outputs.file }}
+        restore-keys: blender-${{ env.BLENDER_SERIES || '4.5' }}.
     - name: Install Blender
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
+        if [ -x ~/blender/blender ]; then echo "Blender restored from cache"; exit 0; fi
         mkdir -p ~/blender
-        curl -fsSL "${{ steps.bl.outputs.url }}" | tar -xJ -C ~/blender --strip-components=1
+        for i in 1 2 3 4 5; do
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 "${{ steps.bl.outputs.url }}" \
+            | tar -xJ -C ~/blender --strip-components=1 && exit 0
+          sleep $((RANDOM % 20 + 10 * i))
+        done
+        exit 1
     - name: Cache photo assets (Poly Haven, CC0)
       uses: actions/cache@v4
       with:
