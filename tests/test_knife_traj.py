@@ -170,3 +170,20 @@ def test_reaction_is_small(p):
     a = np.array(p["object_reaction"])
     assert len(a) == p["total_frames"]
     assert 0 < np.linalg.norm(a, axis=1).max() <= 0.0031
+
+
+def test_cut_rate_accelerates_and_counter_climbs_one_by_one():
+    q = make(format="grid", object_type="steak", cuts_sequence=[24, 400], video_duration=None, fps=30)
+    for lvl in q["levels"]:
+        blades = [b for b in q["blade_strokes"] if b["level"] == lvl["level"]]
+        assert sum(b["group_cuts"] for b in blades) == lvl["cuts"], "every announced cut is made"
+        assert all(b["group_cuts"] == 1 for b in blades[:2]), "each level opens on single, visible cuts"
+        frames = [s["frame"] for s in q["strokes"] if s["level"] == lvl["level"]]
+        assert frames == sorted(frames)
+        gaps = np.diff(frames)
+        half = len(gaps) // 2
+        assert gaps[:3].mean() > 1.5 * np.median(gaps[half:]), "the cuts speed up through the level"
+        bins = np.bincount((np.array(frames) - frames[0]) // 3)
+        assert bins.max() <= max(4, lvl["cuts"] // 15), "the counter never jumps by a whole block"
+        lens = [b["time"]["retract_end"] - b["time"]["ready"] for b in blades]
+        assert lens[-1] < lens[0], "the blade itself moves faster at the end"
