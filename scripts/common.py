@@ -213,6 +213,7 @@ OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
 MATERIALS = {
     "mango": {
         "label": "MANGO",
+        "seam": (0.10, 0.035, 0.0),  # colour of a cut line on the uncut surface (must contrast with it)
         "skin_base": (0.55, 0.42, 0.02), "skin_stem": (0.10, 0.28, 0.02),
         "skin_blush": (0.70, 0.08, 0.02), "skin_roughness": 0.42,
         "flesh": (0.93, 0.42, 0.02), "flesh_deep": (0.85, 0.30, 0.01),
@@ -223,6 +224,7 @@ MATERIALS = {
     },
     "soap": {
         "label": "SOAP",
+        "seam": (0.85, 0.62, 0.88),  # colour of a cut line on the uncut surface (must contrast with it)
         "skin_base": (0.55, 0.25, 0.60), "skin_stem": (0.55, 0.25, 0.60),
         "skin_blush": (0.55, 0.25, 0.60), "skin_roughness": 0.55,
         "flesh": (0.62, 0.30, 0.66), "flesh_deep": (0.58, 0.27, 0.62),
@@ -232,6 +234,7 @@ MATERIALS = {
     },
     "jelly": {
         "label": "JELLY",
+        "seam": (0.35, 0.0, 0.03),  # colour of a cut line on the uncut surface (must contrast with it)
         "skin_base": (0.80, 0.03, 0.10), "skin_stem": (0.80, 0.03, 0.10),
         "skin_blush": (0.80, 0.03, 0.10), "skin_roughness": 0.05,
         "flesh": (0.85, 0.05, 0.12), "flesh_deep": (0.70, 0.02, 0.08),
@@ -241,6 +244,7 @@ MATERIALS = {
     },
     "steak": {
         "label": "STEAK",
+        "seam": (0.03, 0.006, 0.004),  # colour of a cut line on the uncut surface (must contrast with it)
         "skin_base": (0.92, 0.86, 0.78), "skin_stem": (0.92, 0.86, 0.78),
         "skin_blush": (0.92, 0.86, 0.78), "skin_roughness": 0.45,
         "flesh": (0.32, 0.028, 0.032), "flesh_deep": (0.19, 0.012, 0.018),
@@ -250,6 +254,7 @@ MATERIALS = {
     },
     "cake": {
         "label": "CAKE",
+        "seam": (0.80, 0.55, 0.25),  # colour of a cut line on the uncut surface (must contrast with it)
         "skin_base": (0.040, 0.014, 0.007), "skin_stem": (0.040, 0.014, 0.007),
         "skin_blush": (0.040, 0.014, 0.007), "skin_roughness": 0.5,
         "flesh": (0.80, 0.55, 0.25), "flesh_deep": (0.70, 0.45, 0.18),
@@ -259,6 +264,7 @@ MATERIALS = {
     },
     "chocolate": {
         "label": "CHOCOLATE",
+        "seam": (0.45, 0.25, 0.12),  # colour of a cut line on the uncut surface (must contrast with it)
         "skin_base": (0.08, 0.03, 0.01), "skin_stem": (0.08, 0.03, 0.01),
         "skin_blush": (0.08, 0.03, 0.01), "skin_roughness": 0.30,
         "flesh": (0.10, 0.04, 0.015), "flesh_deep": (0.07, 0.03, 0.01),
@@ -290,3 +296,42 @@ def grid_occupancy(shape, lo, ext, n):
         occ[i] = hit.reshape(n[1], k, n[2], k).any(axis=(1, 3))
     centres = [lo[a] + (np.arange(n[a]) + 0.5) * cell[a] for a in range(3)]
     return occ, centres
+
+
+def grid_fit(shape, lo, ext, n):
+    """Same cells as grid_occupancy, plus the box each piece really fills inside its cell.
+
+    A cell on the outline of a rounded object only holds part of the object: drawing it as a
+    full cube makes the pile stick out of the silhouette at the moment the object turns into
+    cubes. For every occupied cell this returns the bounds of its occupied sub-samples, so the
+    cube can be trimmed to the chunk it really is. Returns (occ, centre_offset, size), offset
+    and size in cell units (size 1 = full cell, offset 0 = centred)."""
+    lo, ext, n = np.asarray(lo, float), np.asarray(ext, float), np.asarray(n, int)
+    k = 3 if int(np.prod(n)) <= 3_000_000 else 2
+    cell = ext / n
+    offs = (np.arange(k) + 0.5) / k
+    occ = np.zeros(tuple(n), bool)
+    bmin = np.zeros(tuple(n) + (3,), np.uint8)
+    bmax = np.zeros(tuple(n) + (3,), np.uint8)
+    ys = lo[1] + (np.arange(n[1])[:, None] + offs[None, :]).ravel() * cell[1]
+    zs = lo[2] + (np.arange(n[2])[:, None] + offs[None, :]).ravel() * cell[2]
+    Y, Z = np.meshgrid(ys, zs, indexing="ij")
+
+    def bounds(h, axis):
+        """first / last sub-sample index along `axis` that hits the shape"""
+        first = np.argmax(h, axis=axis)
+        last = k - 1 - np.argmax(np.flip(h, axis=axis), axis=axis)
+        return first, last
+
+    for i in range(n[0]):
+        H = np.stack([shape.inside(np.full_like(Y, lo[0] + (i + ox) * cell[0]), Y, Z)
+                      .reshape(n[1], k, n[2], k) for ox in offs])          # (kx, n1, ky, n2, kz)
+        occ[i] = H.any(axis=(0, 2, 4))
+        bx = bounds(H.any(axis=(2, 4)), 0)                                  # over kx -> (n1, n2)
+        by = bounds(H.any(axis=(0, 4)), 1)                                  # over ky -> (n1, n2)
+        bz = bounds(H.any(axis=(0, 2)), 2)                                  # over kz -> (n1, n2)
+        for a, (f, l) in enumerate((bx, by, bz)):
+            bmin[i, :, :, a], bmax[i, :, :, a] = f, l
+    size = (bmax.astype(np.float32) - bmin + 1) / k
+    offset = (bmin.astype(np.float32) + bmax + 1) / (2 * k) - 0.5
+    return occ, offset, size

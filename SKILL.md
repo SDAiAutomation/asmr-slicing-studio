@@ -16,7 +16,7 @@ Une seule source de vérité temporelle (`plan.json`) pilote le couteau, les cou
 
 ## Le format
 
-Chaque niveau : un objet neuf glisse sur la planche, le couteau fait C coupes droites (X de gauche à droite, puis Y d'avant en arrière, puis Z depuis le haut), chaque coupe laisse une couture visible, puis l'objet s'effondre en ses cubes réels. Compteurs : CUTS (haut, « coupes faites / coupes du niveau ») et CUBES (sous l'objet), calculés sur l'occupation réelle de la forme, jamais estimés. La vidéo boucle : elle finit sur l'objet intact dans la pose d'ouverture.
+Chaque niveau : un objet neuf glisse sur la planche, l'outil fait C coupes droites (X de gauche à droite, puis Y d'avant en arrière, puis Z de bas en haut), chaque coupe laisse une couture visible, puis l'objet s'effondre en ses cubes réels. Plus il y a de coupes, plus l'outil va vite : un couteau seul aux premiers niveaux, puis un peigne de lames parallèles de plus en plus fourni (jusqu'à ~50 lames), chaque lame faisant réellement sa coupe. Compteurs : CUTS (haut, « coupes faites / coupes du niveau ») et CUBES (sous l'objet), calculés sur l'occupation réelle de la forme, jamais estimés. La vidéo boucle : elle finit sur l'objet intact dans la pose d'ouverture.
 
 Objets validés : `steak`, `cake`, `mango`. `soap`, `jelly`, `chocolate` existent mais ne sont pas validés à l'œil.
 
@@ -51,6 +51,7 @@ Les anciennes clés `format`, `target_piece_count`, `cutting_mode`, `progression
 
 - `previews/01_opening.png` : l'objet est-il reconnaissable ?
 - `previews/02_cut_in_progress.png` : coutures visibles, lame dans le plan de coupe.
+- `previews/06_comb_last_level.png` : le peigne du dernier niveau, lames dans l'objet.
 - `previews/05_progression_sheet.png` : les cubes augmentent à chaque niveau.
 - `blender_report.json` : `failures == []`, `cubes_built == cubes_planned` à chaque niveau.
 - Audio : écouter au casque ; le son est procédural (échantillons réels possibles dans `assets/samples/<profil>/`).

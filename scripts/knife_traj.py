@@ -204,16 +204,18 @@ def body_frames(st):
 def fast_frames(st):
     """Shortest stroke the blade can make at full speed (fast phases of a level)."""
     travel = st["s_end"] - st["s_ready"]
-    back = max(2, int(math.ceil(1.5 * travel / VMAX)))
-    fwd = max(4, int(math.ceil(1.5 * travel / VMAX)) + 2)
-    return fwd + back
+    return max(4, int(math.ceil(1.5 * travel / VMAX)) + 2) + _back(travel)
+
+
+def _back(travel):
+    """Frames of the snap back up the kerf at full speed (a chef's chop)."""
+    return max(1, int(math.ceil(1.2 * travel / VMAX)))
 
 
 def quick_timing(a, b, st):
     """Compressed stroke in [a, b] when there is no room for the full, natural one:
     the blade goes straight through at full speed and snaps back (cut rate > ~2/s)."""
-    travel = st["s_end"] - st["s_ready"]
-    back = max(2, int(math.ceil(1.5 * travel / VMAX)))
+    back = _back(st["s_end"] - st["s_ready"])
     r = b - 1
     sep_end = r - back
     x = sep_end - 1
@@ -232,6 +234,8 @@ def transit_frames(p0, q0, p1, q1, centre, safe_r):
     length = float(sum(np.linalg.norm(b - a) for a, b in zip(pts, pts[1:])))
     q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
     ang = 2 * math.acos(min(1.0, abs(float(q0 @ q1))))
+    if length < 0.25 * VMAX and ang < 0.05:   # next chop a few mm aside: no flight needed
+        return 0
     return max(0, int(math.ceil(1.6 * max(length / VMAX, ang / ANG_MAX))))
 
 

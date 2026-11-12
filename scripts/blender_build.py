@@ -423,34 +423,48 @@ def setup_environment(scn, board_size=BOARD_SIZE, brand=""):
     return board
 
 
-def build_knife():
-    """Chef's knife as ONE mesh (copies keep the handle): curved belly, ground bevel, bolster,
-    riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
+def _mat(name, *a, **k):
+    return bpy.data.materials.get(name) or simple_mat(name, *a, **k)
+
+
+def build_knife(blade_z=(0.0,), name="Knife"):
+    """Chef's knife as ONE mesh: curved belly, ground bevel, bolster, riveted handle. Edge
+    along y~0, tip at -x, heel at +x, handle beyond the heel.
+    blade_z: local Z offsets of the blades (unscaled metres). More than one -> a comb of
+    parallel blades sharing one long bolster, spine bar and handle, built as one rigid tool."""
     import numpy as np
     from knife_traj import edge_y
-    steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
-    set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
-    handle_m = simple_mat("Handle", (0.045, 0.024, 0.014), 0.38)
-    rivet_m = simple_mat("Rivet", (0.75, 0.62, 0.35), 0.25, 1.0)
+    steel = bpy.data.materials.get("Steel")
+    if steel is None:
+        steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
+        set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
+    handle_m = _mat("Handle", (0.045, 0.024, 0.014), 0.38)
+    rivet_m = _mat("Rivet", (0.75, 0.62, 0.35), 0.25, 1.0)
     bm = bmesh.new()
     xs = np.linspace(-0.115, 0.09, 42)
+    zs = [float(z) for z in blade_z]
+    comb = len(zs) > 1
+    pitch = min(abs(b - a) for a, b in zip(sorted(zs), sorted(zs)[1:])) if comb else 1.0
+    # comb blades get thinner when they are packed tight, so they never touch each other
+    thick = min(0.0011, 0.3 * pitch) if comb else 0.0011
 
     def spine_y(x):
         return 0.048 if x > -0.02 else 0.013 + 0.035 * ((x + 0.115) / 0.095) ** 0.75
 
-    rows = []
-    for x in xs:
-        e, s = float(edge_y(x)), spine_y(x)
-        grind = e + (s - e) * 0.42
-        t = 0.0011 * min(1.0, (x + 0.125) / 0.05)
-        rows.append([bm.verts.new((x, e, 0.0)),
-                     bm.verts.new((x, grind, t * 0.75)), bm.verts.new((x, s, t)),
-                     bm.verts.new((x, s, -t)), bm.verts.new((x, grind, -t * 0.75))])
-    for a, b in zip(rows, rows[1:]):
-        for k in range(5):
-            bm.faces.new((a[k], b[k], b[(k + 1) % 5], a[(k + 1) % 5]))
-    bm.faces.new(rows[0])
-    bm.faces.new(list(reversed(rows[-1])))
+    for z0 in zs:
+        rows = []
+        for x in xs:
+            e, sp = float(edge_y(x)), spine_y(x)
+            grind = e + (sp - e) * 0.42
+            t = thick * min(1.0, (x + 0.125) / 0.05)
+            rows.append([bm.verts.new((x, e, z0)),
+                         bm.verts.new((x, grind, z0 + t * 0.75)), bm.verts.new((x, sp, z0 + t)),
+                         bm.verts.new((x, sp, z0 - t)), bm.verts.new((x, grind, z0 - t * 0.75))])
+        for a, b in zip(rows, rows[1:]):
+            for k in range(5):
+                bm.faces.new((a[k], b[k], b[(k + 1) % 5], a[(k + 1) % 5]))
+        bm.faces.new(rows[0])
+        bm.faces.new(list(reversed(rows[-1])))
 
     def box(centre, size, mi, bevel=0.0, smooth=False):
         res = bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation(centre) @ Matrix.Diagonal((*size, 1.0)))
@@ -464,20 +478,26 @@ def build_knife():
         for f in faces:
             f.material_index, f.smooth = mi, smooth
 
-    box((0.097, 0.024, 0.0), (0.014, 0.048, 0.0065), 0, 0.0012)
-    box((0.163, 0.026, 0.0), (0.118, 0.026, 0.017), 1, 0.0055, True)
+    zc = (min(zs) + max(zs)) / 2
+    span = max(zs) - min(zs)
+    box((0.097, 0.024, zc), (0.014, 0.048, 0.0065 + span), 0, 0.0012)          # bolster
+    if comb:   # spine bar tying the blades together
+        box((0.0, 0.049, zc), (0.2, 0.004, span + 0.003), 0, 0.0008)
+    box((0.163, 0.026, zc), (0.118, 0.026, 0.017 + span), 1, 0.0055, True)     # handle
     for x in (0.128, 0.163, 0.198):
-        res = bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.0032, radius2=0.0032, depth=0.0178,
-                                    matrix=Matrix.Translation((x, 0.026, 0.0)))
-        for f in {f for v in res["verts"] for f in v.link_faces}:
-            f.material_index, f.smooth = 2, True
+        for zr in ((zc - span / 2 - 0.0085, zc + span / 2 + 0.0085) if comb else (zc,)):
+            depth = 0.004 if comb else 0.0178
+            res = bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.0032, radius2=0.0032,
+                                        depth=depth, matrix=Matrix.Translation((x, 0.026, zr)))
+            for f in {f for v in res["verts"] for f in v.link_faces}:
+                f.material_index, f.smooth = 2, True
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-    me = bpy.data.meshes.new("Knife")
+    me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
     bm.free()
     for m in (steel, handle_m, rivet_m):
         me.materials.append(m)
-    blade = bpy.data.objects.new("Knife", me)
+    blade = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(blade)
     blade.rotation_mode = "QUATERNION"
     blade.scale = (0.85, 0.85, 0.85)
@@ -527,7 +547,7 @@ def _fmt(n):
     return f"{int(n):,}"
 
 
-def _counter(cam, name, events, size, y, D, mat):
+def _counter(cam, name, events, size, y, D, mat, parent=None):
     """events: (frame, value) or (frame, value, total) -> shows "value / total"."""
     per_frame = {}
     for e in sorted(events, key=lambda e: e[0]):
@@ -536,11 +556,12 @@ def _counter(cam, name, events, size, y, D, mat):
     for i, (f, v) in enumerate(ev):
         nxt = ev[i + 1][0] if i + 1 < len(ev) else None
         body = _fmt(v[0]) if len(v) == 1 or v[1] is None else f"{_fmt(v[0])} / {_fmt(v[1])}"
-        ob = text_obj(f"{name}_{i:05d}", body, size, (0, y, -D), cam, mat)
+        ob = text_obj(f"{name}_{i:05d}", body, size, (0, y, -D) if parent is None else (0, 0, 0),
+                      parent or cam, mat)
         set_visibility(ob, f, nxt)
 
 
-def build_overlay(cam, cfg, cuts_events, pieces_events, total):
+def build_overlay(cam, cfg, cuts_events, pieces_events, total, levels=None):
     """Two counters in every format: CUTS on top, PIECES/CUBES under the object.
 
     Positions stay inside the TikTok/Reels safe zone: the top ~13 % (search bar, tabs)
@@ -554,8 +575,27 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
     fps = bpy.context.scene.render.fps
     if cfg["show_counter"]:
         _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.60, D, white)
-        text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
-        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, ink)  # dark ink: this counter sits on the light board
+        if levels:   # "LEVEL 3/10 - CUTS": how far the climb goes, without taking more screen
+            for i, lv in enumerate(levels):
+                nxt = levels[i + 1]["start_frame"] if i + 1 < len(levels) else None
+                ob = text_obj(f"CutsWord_{i:02d}", f"LEVEL {i + 1}/{len(levels)}  ·  {cfg['label_cuts']}",
+                              hh * 0.05, (0, hh * 0.47, -D), cam, accent)
+                set_visibility(ob, max(1, lv["start_frame"]), nxt)
+        else:
+            text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
+        # the cube counter sits on a holder that "pops" each time a level turns into cubes:
+        # the number is the payoff of every level
+        holder = bpy.data.objects.new("PiecesPulse", None)
+        bpy.context.scene.collection.objects.link(holder)
+        holder.parent = cam
+        holder.location = (0, -hh * 0.36, -D)
+        for lv in levels or []:
+            interp("BEZIER")
+            for fr, sc in ((lv["collapse_start"], 1.0), (lv["collapse_end"], 1.45 if lv is levels[-1] else 1.28),
+                           (lv["collapse_end"] + int(0.35 * fps), 1.0)):
+                holder.scale = (sc, sc, 1.0)
+                holder.keyframe_insert("scale", frame=fr)
+        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, ink, holder)  # dark ink: this counter sits on the light board
         text_obj("PiecesWord", cfg["label_pieces"], hh * 0.05, (0, -hh * 0.48, -D), cam, accent)
         # dark plate: the label sits on the dark table in wide shots but on the light board when
         # the camera pushes in, and must stay readable on both
@@ -568,6 +608,31 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
         plate.parent = cam
         plate.location = (0, -hh * 0.48, -D * 1.003)
         plate.scale = (hh * 0.12, hh * 0.037, 1)
+    if levels:
+        # progress bar under "LEVEL x/N": the viewer sees how much of the climb is left
+        n = len(levels)
+        bar_w = hh * 0.30
+        for nm, mat_b, z in (("BarBack", simple_mat("BarBack", (0.06, 0.06, 0.065), 1.0, 0.0, emit=(0.06, 0.06, 0.065)), 1.002),
+                             ("BarFill", accent, 1.0)):
+            bm_ = bpy.data.meshes.new(nm)
+            # pivot on the left edge so the fill grows to the right
+            bm_.from_pydata([(0, -1, 0), (2, -1, 0), (2, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
+            bm_.materials.append(mat_b)
+            bar = bpy.data.objects.new(nm, bm_)
+            bpy.context.scene.collection.objects.link(bar)
+            bar.parent = cam
+            bar.location = (-bar_w, hh * 0.432, -D * z)
+            bar.scale = (bar_w / 2, hh * 0.006, 1)
+            if nm == "BarFill":
+                interp("BEZIER")
+                bar.scale = (1e-4, hh * 0.006, 1)
+                bar.keyframe_insert("scale", frame=1)
+                for i, lv in enumerate(levels):
+                    bar.scale = (bar_w / 2 * (i + 1) / n, hh * 0.006, 1)
+                    bar.keyframe_insert("scale", frame=lv["collapse_end"])
+                    bar.keyframe_insert("scale", frame=levels[i + 1]["start_frame"] if i + 1 < n else total - int(0.5 * fps))
+                bar.scale = (1e-4, hh * 0.006, 1)
+                bar.keyframe_insert("scale", frame=total)
     if cfg.get("hook_text"):
         ob = text_obj("Hook", _wrap(cfg["hook_text"], 22), hh * 0.065, (0, hh * 0.31, -D), cam, white)
         set_visibility(ob, 1, int(3.0 * fps))
@@ -606,7 +671,10 @@ def setup_render(scn, cfg, out_dir, final):
             pass
         # small studio scene: few bounces are enough, caustics never matter here
         c.max_bounces = 4
-        scn.render.use_motion_blur = False
+        # only the knife / comb blurs (set per object in the scene builder): it sells the speed
+        # of the fast chops; cubes and text stay sharp and cheap
+        scn.render.use_motion_blur = True
+        scn.render.motion_blur_shutter = 0.5
         c.diffuse_bounces, c.glossy_bounces = 2, 2
         c.transmission_bounces, c.transparent_max_bounces = 2, 4
         c.caustics_reflective = c.caustics_refractive = False
@@ -674,7 +742,8 @@ def main():
         shots = {"01_opening": 2,
                  "02_cut_in_progress": (mid["strokes_start"] + mid["strokes_end"]) // 2,
                  "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
-                 "04_final": lv[-1]["collapse_end"] + 4}
+                 "04_final": lv[-1]["collapse_end"] + 4,
+                 "06_comb_last_level": (lv[-1]["strokes_start"] + lv[-1]["strokes_end"]) // 2}
         # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
         sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
         print(f"ASMR_LOG scene built in {report.get('build_seconds')}s, rendering previews", flush=True)

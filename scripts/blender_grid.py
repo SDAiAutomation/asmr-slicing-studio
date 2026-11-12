@@ -19,7 +19,7 @@ import numpy as np
 from mathutils import Vector
 
 import blender_build as B
-from common import MATERIALS, OBJECTS, grid_occupancy
+from common import MATERIALS, OBJECTS, grid_fit
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +271,13 @@ def steak_materials(M):
     return [fat, meat_mat(M), fat]
 
 
+def seam_half_width(cell):
+    return min(0.0009, 0.3 * min(cell))
+
+
 def add_seams(mat, P, nodes_out, colour=(0.03, 0.006, 0.004, 1)):
     """Darken thin lines at the planned cut positions whose cut is already made.
-    P: dict name -> Value node (lo_x.., cell_x.., n_x, n_y, n_z, cz, w)."""
+    P: dict name -> Value node (lo_x.., cell_x.., c_x.. cuts, s_x.. stride, d_x.. passes done, w)."""
     nt = mat.node_tree
     L = nt.links
     bsdf = nt.nodes.get("Principled BSDF")
@@ -308,12 +312,12 @@ def add_seams(mat, P, nodes_out, colour=(0.03, 0.006, 0.004, 1)):
         k = math("ROUND", u)
         dist = math("MULTIPLY", math("ABSOLUTE", math("SUBTRACT", u, k)), val(f"cell_{ax}"))
         line = math("LESS_THAN", dist, val("w"))
-        if ax < 2:  # cuts 1..n made, sweeping from low to high coordinate
-            active = math("MULTIPLY", math("GREATER_THAN", k, 0.5),
-                          math("LESS_THAN", k, math("ADD", val(f"n_{ax}"), 0.5)))
-        else:      # horizontal cuts land from the top: indices > cz - n
-            active = math("MULTIPLY", math("GREATER_THAN", k, math("SUBTRACT", val("cz"), math("SUBTRACT", val("n_2"), 0.5))),
-                          math("LESS_THAN", k, math("ADD", val("cz"), 0.5)))
+        # cut k (1..c) is made once pass (k-1) mod stride has gone through: d_ax passes done.
+        # A single knife has stride == c, so the cuts simply appear one after the other.
+        inside = math("MULTIPLY", math("GREATER_THAN", k, 0.5),
+                      math("LESS_THAN", k, math("ADD", val(f"c_{ax}"), 0.5)))
+        phase = math("MODULO", math("SUBTRACT", k, 1.0), math("MAXIMUM", val(f"s_{ax}"), 1.0))
+        active = math("MULTIPLY", inside, math("LESS_THAN", phase, math("SUBTRACT", val(f"d_{ax}"), 0.5)))
         s = math("MULTIPLY", line, active)
         total = s if total is None else math("MAXIMUM", total, s)
     m, f, a, b, o = B.mix_rgb(nt)
@@ -458,6 +462,11 @@ def collapse_group(mat):
     iop = N.new("GeometryNodeInstanceOnPoints")
     L.new(sp.outputs["Geometry"], iop.inputs["Points"])
     L.new(sm.outputs["Geometry"], iop.inputs["Instance"])
+    # edge cells hold only part of a rounded object: trim each cube to its real chunk
+    fit = N.new("GeometryNodeInputNamedAttribute")
+    fit.data_type = "FLOAT_VECTOR"
+    fit.inputs["Name"].default_value = "fit"
+    L.new([o for o in fit.outputs if o.enabled][0], iop.inputs["Scale"])
     L.new(iop.outputs["Instances"], go.inputs["Geometry"])
     ids = {it.name: it.identifier for it in I.items_tree
            if getattr(it, "item_type", "SOCKET") == "SOCKET" and it.in_out == "INPUT"}
@@ -465,9 +474,12 @@ def collapse_group(mat):
 
 
 def cells(shape, lvl):
-    """Occupied cell centres, their kind (0 flesh / 1 skin-fat) and a surface flag."""
+    """Occupied cells: centre of the chunk each one really holds, its size (fraction of the
+    cell per axis), its kind (0 flesh / 1 skin-fat) and a surface flag."""
     lo, ext, n = np.array(lvl["lo"]), np.array(lvl["ext"]), np.array(lvl["cells_xyz"])
-    occ, axes = grid_occupancy(shape, lo, ext, n)
+    occ, offset, size = grid_fit(shape, lo, ext, n)
+    cell = ext / n
+    axes = [lo[a] + (np.arange(n[a]) + 0.5) * cell[a] for a in range(3)]
     Y, Z = np.meshgrid(axes[1], axes[2], indexing="ij")
     inner = occ.copy()
     for a in range(3):
@@ -485,17 +497,18 @@ def cells(shape, lvl):
     else:
         kind = surf.astype(np.float32)
     idx = np.nonzero(occ)
-    co = np.stack([axes[0][idx[0]], axes[1][idx[1]], axes[2][idx[2]]], 1).astype(np.float32)
-    return co, kind[idx].astype(np.float32), surf[idx]
+    co = np.stack([axes[0][idx[0]], axes[1][idx[1]], axes[2][idx[2]]], 1)
+    co = (co + offset[idx] * cell).astype(np.float32)
+    return co, kind[idx].astype(np.float32), surf[idx], size[idx].astype(np.float32)
 
 
-def display_subset(co, kinds, surf, budget, seed):
+def display_subset(co, kinds, surf, fit, budget, seed):
     """Render-time budget: above `budget` cubes, keep every surface cube plus a random
     share of the hidden interior ones. The counter still shows the exact total; cubes
     this small are below one pixel, so the picture does not change."""
     n = len(co)
     if n <= budget:
-        return co, kinds
+        return co, kinds, fit
     rng = np.random.default_rng(seed)
     s_idx = np.flatnonzero(surf)
     i_idx = np.flatnonzero(~surf)
@@ -505,10 +518,10 @@ def display_subset(co, kinds, surf, budget, seed):
         extra = rng.choice(i_idx, min(len(i_idx), budget - len(s_idx)), replace=False)
         keep = np.concatenate([s_idx, extra])
     keep.sort()
-    return co[keep], kinds[keep]
+    return co[keep], kinds[keep], fit[keep]
 
 
-def cubes_object(name, co, kinds, ng, ids, size, height, mat):
+def cubes_object(name, co, kinds, fit, ng, ids, size, height, mat):
     me = bpy.data.meshes.new(name)
     me.vertices.add(len(co))
     me.vertices.foreach_set("co", co.ravel())
@@ -516,6 +529,8 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
     att.data.foreach_set("value", kinds)
     org = me.attributes.new("orig", "FLOAT_VECTOR", "POINT")  # original position -> shading
     org.data.foreach_set("vector", co.ravel())
+    ft = me.attributes.new("fit", "FLOAT_VECTOR", "POINT")    # chunk size inside its cell
+    ft.data.foreach_set("vector", fit.ravel())
     me.update()
     ob = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(ob)
@@ -553,15 +568,36 @@ def build_grid_scene(plan, out_dir):
     params = {}
     seam_sets = []
     for mt in {id(m): m for m in mats}.values():
-        add_seams(mt, {}, seam_sets)
+        add_seams(mt, {}, seam_sets, (*M["seam"], 1))
     me = object_mesh(shape, "Object")
     for mt in mats:
         me.materials.append(mt)
 
     cmat = cube_mat(M, steak)
     ng, ids = collapse_group(cmat)
-    knife = B.build_knife()
-    kmat = bpy.data.materials["Steel"]
+    # the hand: one empty follows the planned track; the tool in hand (single knife or a
+    # comb of parallel blades) is swapped high above the object between runs of passes
+    rig = bpy.data.objects.new("KnifeRig", None)
+    scn.collection.objects.link(rig)
+    rig.rotation_mode = "QUATERNION"
+    ks = float(plan["knife_scale"])
+    tools = {}
+    for tl in plan.get("tools") or [{"blade_z": [0.0], "show": 1, "hide": None}]:
+        key = tuple(round(z, 7) for z in tl["blade_z"])
+        if key not in tools:   # one object per distinct tool, shown in each of its windows
+            zl = [z / ks for z in key]
+            ob = B.build_knife(zl, name="Knife" if len(zl) == 1 else f"Comb_{len(zl)}")
+            ob.parent = rig
+            ob.scale = (1.0, 1.0, 1.0)
+            ob.cycles.use_motion_blur = True
+            B.interp("CONSTANT")
+            B.key_visible(ob, 1, False)
+            tools[key] = ob
+        ob = tools[key]
+        B.interp("CONSTANT")
+        B.key_visible(ob, max(1, tl["show"]), True)
+        if tl["hide"] and tl["hide"] <= plan["total_frames"]:
+            B.key_visible(ob, tl["hide"], False)
     report = {"levels": [], "failures": []}
 
     def key_param(name, frame, value):
@@ -576,14 +612,14 @@ def build_grid_scene(plan, out_dir):
     cuts_ev = [(c[0], c[1], lvl_cuts.get(c[2])) for c in plan["counters"]["cuts"]]
     pieces_ev = [(c[0], c[1]) for c in plan["counters"]["pieces"]]
     height = float(hi[2] - lo[2])
-    knife.scale = (plan["knife_scale"],) * 3
+    rig.scale = (ks,) * 3
     B.interp("LINEAR")
     for i, row in enumerate(plan.get("knife_track", [])):
         f = i + 1
-        knife.location = row[:3]
-        knife.rotation_quaternion = row[3:]
-        knife.keyframe_insert("location", frame=f)
-        knife.keyframe_insert("rotation_quaternion", frame=f)
+        rig.location = row[:3]
+        rig.rotation_quaternion = row[3:]
+        rig.keyframe_insert("location", frame=f)
+        rig.keyframe_insert("rotation_quaternion", frame=f)
 
     for lvl in plan["levels"]:
         li = lvl["level"]
@@ -595,9 +631,12 @@ def build_grid_scene(plan, out_dir):
         for ax in range(3):
             key_param(f"lo_{ax}", start, lvl["lo"][ax])
             key_param(f"cell_{ax}", start, cell[ax])
-            key_param(f"n_{ax}", start, 0)
-        key_param("cz", start, lvl["cuts_xyz"][2])
-        key_param("w", start, min(0.0006, 0.09 * min(cell)))
+            key_param(f"c_{ax}", start, lvl["cuts_xyz"][ax])
+            key_param(f"s_{ax}", start, max(1, lvl["passes_xyz"][ax]))
+            key_param(f"d_{ax}", start, 0)
+        # half-width of a cut line: ~2 px at the first levels; once cells are smaller than a
+        # pixel the lines merge into a tint that visibly sweeps across the object as it is cut
+        key_param("w", start, seam_half_width(cell))
 
         ob = bpy.data.objects.new(f"Level_{li:02d}", me)
         scn.collection.objects.link(ob)
@@ -609,21 +648,19 @@ def build_grid_scene(plan, out_dir):
         ob.keyframe_insert("location", frame=start + enter)
 
         # cuts: seams + knife
-        counts = [0, 0, 0]
-        strokes = [s for s in plan["strokes"] if s["level"] == li]
-        for i, st in enumerate(strokes):
-            ax, f = st["axis"], st["frame"]
-            counts[ax] += 1
-            key_param(f"n_{ax}", f + 1, counts[ax])
+        done = [0, 0, 0]
+        for ps in lvl["passes"]:   # every blade of a pass leaves its line once it is through
+            done[ps["axis"]] += 1
+            key_param(f"d_{ps['axis']}", ps["frame"] + 1, done[ps["axis"]])
 
         # cubes
         t_l = time.time()
-        co, kinds, surf = cells(shape, lvl)
+        co, kinds, surf, fit = cells(shape, lvl)
         if len(co) != lvl["cubes"]:
             report["failures"].append({"level": li, "planned": lvl["cubes"], "built": int(len(co))})
         built = int(len(co))
-        co, kinds = display_subset(co, kinds, surf, int(cfg.get("display_cubes_max", 1200000)), li)
-        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
+        co, kinds, fit = display_subset(co, kinds, surf, fit, int(cfg.get("display_cubes_max", 1200000)), li)
+        cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, fit, ng, ids, cell, height, cmat)
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
         B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
@@ -656,13 +693,21 @@ def build_grid_scene(plan, out_dir):
         for ax in range(3):
             key_param(f"lo_{ax}", lf, li0["lo"][ax])
             key_param(f"cell_{ax}", lf, li0["cell_size"][ax])
-            key_param(f"n_{ax}", lf, 0)
-        key_param("cz", lf, li0["cuts_xyz"][2])
+            key_param(f"c_{ax}", lf, li0["cuts_xyz"][ax])
+            key_param(f"s_{ax}", lf, max(1, li0["passes_xyz"][ax]))
+            key_param(f"d_{ax}", lf, 0)
         cuts_ev.append((lf, 0, li0["cuts"]))
         pieces_ev.append((lf, 1))
 
     cam = grid_camera(plan, lo, hi, board_size)
-    B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"])
+    B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"], plan["levels"])
+    # motion blur only on the tool (it reads as speed); everything else stays sharp
+    for ob in scn.objects:
+        if not (ob.name.startswith("Knife") or ob.name.startswith("Comb")):
+            try:
+                ob.cycles.use_motion_blur = False
+            except AttributeError:
+                pass
     B.setup_render(scn, cfg, out_dir, final=False)
     report["final_pieces_validated"] = report["levels"][-1]["cubes_built"] if report["levels"] else 0
     report["target"] = plan["levels"][-1]["cubes"] if plan["levels"] else 0
@@ -692,5 +737,15 @@ def grid_camera(plan, lo, hi, board_size):
     cam.location = target + view * dist
     cam.rotation_mode = "QUATERNION"
     cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
+    # final payoff: a slow push-in on the last collapse, back to the opening shot for the loop
+    lv = plan["levels"]
+    if lv:
+        last, fps = lv[-1], plan["fps"]
+        home = cam.location.copy()
+        B.interp("BEZIER")
+        for fr, k in ((last["collapse_start"], 0.0), (last["exit_start"], 0.16),
+                      (plan["loop_in"], 0.16), (min(plan["total_frames"] - 1, plan["loop_in"] + int(0.6 * fps)), 0.0)):
+            cam.location = home + (target - home) * k
+            cam.keyframe_insert("location", frame=fr)
     # no depth of field: the counters are camera-attached and must stay sharp
     return cam

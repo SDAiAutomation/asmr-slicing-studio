@@ -59,6 +59,29 @@ def test_grid_audio_rhythm_and_levels():
         assert sum(e["type"] == "surface_contact" for e in ev) == 2
 
 
+def test_edge_cubes_are_trimmed_to_the_shape():
+    from common import OBJECTS, grid_occupancy, grid_fit
+    for name, n in (("cake", (7, 7, 3)), ("mango", (8, 11, 6))):
+        shape = OBJECTS[name]
+        lo, hi = shape.bbox()
+        occ, off, size = grid_fit(shape, lo, hi - lo, np.array(n))
+        assert (occ == grid_occupancy(shape, lo, hi - lo, np.array(n))[0]).all(), "same cube count"
+        sz = size[occ]
+        assert sz.max() <= 1.0 and sz.min() > 0.0
+        assert (sz.min(axis=1) < 1).mean() > 0.1, "edge cubes are smaller than a full cell"
+        assert (np.abs(off[occ]) + sz / 2 <= 0.5 + 1e-6).all(), "trimmed cube stays inside its cell"
+
+
+def test_cut_lines_contrast_with_the_surface():
+    from common import MATERIALS
+    lum = lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    for name in ("cake", "mango", "steak"):
+        M = MATERIALS[name]
+        surface = M["skin_base"] if name != "steak" else M["flesh"]
+        hi, lo = sorted((lum(M["seam"]), lum(surface)), reverse=True)
+        assert (hi + 0.05) / (lo + 0.05) > 1.6, name
+
+
 # ---- Blender (optional) ------------------------------------------------------
 def _blender():
     sys.path.insert(0, os.path.join(ROOT, "scripts"))

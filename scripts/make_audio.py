@@ -1,8 +1,8 @@
 """Procedural ASMR soundtrack built from the same plan.json as the animation.
 
 Grid format: a whoosh + chop per visible blade pass (placed on the frames where the
-edge enters and leaves the object), a crumble cascade and a thud when each level
-collapses into cubes. Material-specific, seeded variation, short room reverb,
+edges enter and leave the object, layered when a comb of blades cuts at once), a crumble
+cascade and a thud when each level collapses into cubes. Material-specific, seeded variation, short room reverb,
 peak-normalised below clipping.
 
 Usage:
@@ -176,7 +176,8 @@ def whoosh(rng, dur=0.16):
 
 
 def grid_events(plan, buf, P, rng, samples, events, t_of):
-    """A chop per blade pass, a crumble cascade when the object collapses."""
+    """A chop per blade pass (thicker for a comb of blades), a crumble cascade when the
+    object collapses."""
     fps = plan["fps"]
     # one sound per visible blade pass, placed on the frames where the edge enters and
     # leaves the object: the audio cannot drift from the animation
@@ -191,6 +192,13 @@ def grid_events(plan, buf, P, rng, samples, events, t_of):
         dur = max(0.03, (x - c) / fps)
         gain = rng.uniform(0.85, 1.05) * (1.0 if nh == 1 else min(1.3, 0.85 + 0.12 * np.log2(nh)))
         place(buf, t_of(c), chop(rng, P, samples, dur, nh), pan, gain)
+        # a comb of blades: several edges bite a few ms apart and spread across the stereo
+        # field -> a thick "shhk" instead of a single tap
+        layers = min(6, len(bs.get("blade_z", [0])) // 3)
+        for _ in range(layers):
+            dt = rng.uniform(0.002, 0.014)
+            place(buf, t_of(c) + dt, chop(rng, P, samples, dur, 1), float(np.clip(pan + rng.uniform(-0.5, 0.5), -0.8, 0.8)),
+                  gain * 0.45 / np.sqrt(max(1, layers)))
         events.append({"t": t_of(c), "type": "contact", "frame": c, "strokes": nh})
         events.append({"t": t_of(x), "type": "end_of_cut", "frame": x, "strokes": nh})
     for lvl in plan["levels"]:
