@@ -18,7 +18,14 @@ runs:
       run: |
         S="${BLENDER_SERIES:-4.5}"
         URL="https://download.blender.org/release/Blender${S}/"
-        F=$(curl -fsSL "$URL" | grep -oE "blender-${S}\.[0-9]+-linux-x64\.tar\.xz" | sort -V | tail -1)
+        # ~20 render machines hit this listing at once and blender.org sometimes answers 403:
+        # retry, then fall back to the last known build (its cache entry makes the run work)
+        F=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 4 "$URL" \
+              | grep -oE "blender-${S}\.[0-9]+-linux-x64\.tar\.xz" | sort -V | tail -1) || F=""
+        if [ -z "$F" ] && [ "$S" = "4.5" ]; then
+          F="blender-4.5.16-linux-x64.tar.xz"
+          echo "::warning::Blender listing unavailable, using known build $F"
+        fi
         test -n "$F" || { echo "No Blender build found for $S"; exit 1; }
         echo "file=$F" >> "$GITHUB_OUTPUT"
         echo "url=${URL}${F}" >> "$GITHUB_OUTPUT"
