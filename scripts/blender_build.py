@@ -719,4 +719,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:            # Blender -P exits 0 on a script error: make CI see it
+        import traceback
+        traceback.print_exc()
+        sys.stdout.flush()
+        os._exit(1)

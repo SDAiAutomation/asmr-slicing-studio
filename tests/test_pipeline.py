@@ -82,7 +82,9 @@ def test_blender_grid_build():
                             "--", "--plan", pl, "--out", d, "--stage", "build"],
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stdout[-3000:]
-        rep = json.load(open(os.path.join(d, "blender_report.json")))
+        rp = os.path.join(d, "blender_report.json")
+        assert os.path.exists(rp), (r.stdout[-4000:] + "\n--- stderr ---\n" + r.stderr[-4000:])
+        rep = json.load(open(rp))
         assert rep["failures"] == []
         assert [l["cubes_built"] for l in rep["levels"]] == [l["cubes"] for l in p["levels"]]
 
