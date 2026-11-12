@@ -170,18 +170,64 @@ def test_audio_contacts_equal_blade_contacts(p, tmp_path):
     assert got == want or got == want2
 
 
-def test_cut_rate_accelerates_and_counter_climbs_one_by_one():
-    q = make(object_type="steak", cuts_sequence=[24, 400], video_duration=None, fps=30)
-    for lvl in q["levels"]:
-        blades = [b for b in q["blade_strokes"] if b["level"] == lvl["level"]]
+@pytest.fixture(scope="module")
+def ramp():
+    return make(object_type="steak", cuts_sequence=[3, 8, 45, 300], video_duration=None)
+
+
+def _rate(q, lvl):
+    blades = [b for b in q["blade_strokes"] if b["level"] == lvl["level"]]
+    return len(blades) / ((lvl["strokes_end"] - lvl["strokes_start"]) / q["fps"]), blades
+
+
+def test_tool_speeds_up_and_grows_with_the_cut_count(ramp):
+    rates, combs = [], []
+    for lvl in ramp["levels"]:
+        r, blades = _rate(ramp, lvl)
         assert sum(b["group_cuts"] for b in blades) == lvl["cuts"], "every announced cut is made"
-        assert all(b["group_cuts"] == 1 for b in blades[:2]), "each level opens on single, visible cuts"
-        frames = [s["frame"] for s in q["strokes"] if s["level"] == lvl["level"]]
-        assert frames == sorted(frames)
-        gaps = np.diff(frames)
-        half = len(gaps) // 2
-        assert gaps[:3].mean() > 1.5 * np.median(gaps[half:]), "the cuts speed up through the level"
-        bins = np.bincount((np.array(frames) - frames[0]) // 3)
-        assert bins.max() <= max(4, lvl["cuts"] // 15), "the counter never jumps by a whole block"
-        lens = [b["time"]["retract_end"] - b["time"]["ready"] for b in blades]
-        assert lens[-1] < lens[0], "the blade itself moves faster at the end"
+        rates.append(r)
+        combs.append(max(len(b["blade_z"]) for b in blades))
+    assert combs[0] == 1 and combs[1] == 1, "the first levels are cut by a single knife"
+    assert combs == sorted(combs) and combs[-1] >= 10, "more cuts -> more blades on the tool"
+    assert rates[-1] > 1.8 * rates[0], "the passes come faster level after level"
+    for lvl in ramp["levels"]:
+        _, blades = _rate(ramp, lvl)
+        gaps = np.diff([b["time"]["contact"] for b in blades if b["axis"] == 0])
+        if len(gaps) >= 4 and lvl["level"] >= 2:
+            assert gaps[:2].mean() > gaps[-2:].mean(), "and faster within each level"
+
+
+def test_each_blade_of_a_comb_sits_on_a_planned_cut(ramp):
+    strokes = ramp["strokes"]
+    for b in ramp["blade_strokes"]:
+        assert b["group_cuts"] <= len(b["blade_z"])
+        n = np.asarray(b["n"])
+        m = KT.quat_to_mat(np.asarray(b["q"]))
+        planes = {round(float((np.asarray(b["anchor"]) + m[:, 2] * z) @ n), 5) for z in b["blade_z"]}
+        made = [s for s in strokes if s["level"] == b["level"] and s["axis"] == b["axis"]
+                and b["time"]["contact"] <= s["frame"] <= b["time"]["exit"]]
+        for s in made:
+            assert any(abs(s["pos"] - pl) < 1e-4 for pl in planes), "a cut lands where a blade is"
+
+
+def test_comb_stays_clear_of_object_and_board(ramp):
+    shape = OBJECTS["steak"]
+    k = ramp["knife_scale"]
+    pose, _ = scene_pose(ramp, 0)
+    windows = [(b["time"]["contact"], b["time"]["retract_end"]) for b in ramp["blade_strokes"]]
+    for tool in ramp["tools"]:
+        zs = np.asarray(tool["blade_z"])
+        for f in range(tool["show"], min(tool["hide"], ramp["total_frames"] + 1)):
+            pos, m = pose_at(ramp, f)
+            pts = np.vstack([KT.blade_outline(pos + m[:, 2] * z, m, k) for z in zs])
+            assert pts[:, 2].min() > 0.0, ("board", f)
+            lvl = next((l for l in ramp["levels"] if l["start_frame"] + l["enter_frames"] <= f < l["collapse_start"]), None)
+            if lvl is None or any(a <= f <= b for a, b in windows):
+                continue
+            assert not KT.inside_world(shape, pose, pts).any(), ("object", f)
+
+
+def test_counter_climbs_through_each_pass(ramp):
+    for lvl in ramp["levels"]:
+        frames = [s["frame"] for s in ramp["strokes"] if s["level"] == lvl["level"]]
+        assert frames == sorted(frames) and len(frames) == lvl["cuts"]
