@@ -606,7 +606,7 @@ def setup_render(scn, cfg, out_dir, final):
             pass
         # small studio scene: few bounces are enough, caustics never matter here
         c.max_bounces = 4
-        scn.render.use_motion_blur = False
+        scn.render.use_motion_blur = bool(scn.get("knife_blur", False))  # knife-only blur (grid)
         c.diffuse_bounces, c.glossy_bounces = 2, 2
         c.transmission_bounces, c.transparent_max_bounces = 2, 4
         c.caustics_reflective = c.caustics_refractive = False
@@ -675,6 +675,16 @@ def main():
                  "02_cut_in_progress": (mid["strokes_start"] + mid["strokes_end"]) // 2,
                  "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
                  "04_final": lv[-1]["collapse_end"] + 4}
+        bl = [s for s in plan.get("blade_strokes", []) if s["level"] == lv[-1]["level"]]
+        if len(lv) == 1 and len(bl) >= 4:
+            # single level: a calm stroke mid-object, the middle of the ramp, the fast blur, the end
+            def mid_obj(s):
+                return int(round((s["time"]["contact"] + s["time"]["exit"]) / 2))
+            shots = {"01_opening": 2,
+                     "02_first_stroke": mid_obj(bl[1]),
+                     "03_mid_strokes": mid_obj(bl[len(bl) // 2]),
+                     "04_fast_strokes": mid_obj(bl[int(len(bl) * 0.9)]),
+                     "06_final": lv[-1]["collapse_end"] + 4}
         # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
         sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
         print(f"ASMR_LOG scene built in {report.get('build_seconds')}s, rendering previews", flush=True)

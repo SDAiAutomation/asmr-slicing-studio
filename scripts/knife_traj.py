@@ -342,3 +342,88 @@ def build_track(strokes, total_frames, centre, safe_r):
         last = q
         out.append([round(float(x), 6) for x in (*p, *q)])
     return out
+
+
+# ---- chop format: one real stroke per cut, sub-frame keys (motion blur does the rest) ----
+def _key(t, p, q):
+    return [float(t), *[float(x) for x in p], *[float(x) for x in q]]
+
+
+def _stroke_poses(st):
+    q = np.asarray(st["q"], float)
+    return (stroke_pos(st, st["s_ready"]), stroke_pos(st, st["s_in"]),
+            stroke_pos(st, st["s_out"]), stroke_pos(st, st["s_end"]), q)
+
+
+def chop_keys(blades, centre, safe_r, prev=None):
+    """Pose keys [t, x, y, z, qw, qx, qy, qz] (t in frames, may be fractional) for a chain of
+    strokes. Each stroke runs from its ready pose through the object at constant speed; between
+    two strokes the blade lifts back up its own kerf and steps to the next plane (or, when the
+    direction changes, flies around the object)."""
+    centre = np.asarray(centre, float)
+    keys = []
+    for st in blades:
+        t = st["time"]
+        R, I, O, E, q = _stroke_poses(st)
+        if prev is None:
+            keys.append(_key(max(1.0, t["ready"] - 1.0), R, q))
+        else:
+            pt = prev["time"]
+            pR, _, _, pE, pq = _stroke_poses(prev)
+            gap = max(1e-3, t["ready"] - pt["sep_end"])
+            back = pt["sep_end"] + 0.6 * gap
+            keys.append(_key(back, pR, pq))               # back up through its own cut
+            same = prev.get("level") == st.get("level") and prev["axis"] == st["axis"] \
+                and abs(float(np.dot(pq, q))) > 0.999
+            if not same:                                   # turn: fly around the object
+                for u in np.linspace(0, 1, 10)[1:-1]:
+                    p, qq = _transit(pR, pq, R, q, centre, safe_r, float(u))
+                    keys.append(_key(back + (t["ready"] - back) * u, p, qq))
+            keys.append(_key(t["ready"], R, q))
+        keys.append(_key(t["contact"], I, q))
+        keys.append(_key(t["exit"], O, q))
+        keys.append(_key(t["sep_end"], E, q))
+        prev = st
+    return keys
+
+
+def close_loop(keys, first, last, total, centre, safe_r):
+    """After the last stroke: lift out, then fly back to the opening pose (seamless loop)."""
+    R0, _, _, _, q0 = _stroke_poses(first)
+    R, _, _, _, q = _stroke_poses(last)
+    t0 = last["time"]["sep_end"]
+    out = list(keys)
+    out.append(_key(t0 + 4, R, q))
+    t1 = t0 + 4
+    for u in np.linspace(0, 1, 12)[1:]:
+        p, qq = _transit(R, q, R0, q0, centre, safe_r, float(u))
+        out.append(_key(t1 + (total - t1) * u, p, qq))
+    out.sort(key=lambda k: k[0])
+    clean, last_t = [], -1e9
+    for k in out:                          # strictly increasing times, continuous quaternions
+        if k[0] <= last_t + 1e-4:
+            k = [last_t + 1e-3] + k[1:]
+        if clean and np.dot(clean[-1][4:], k[4:]) < 0:
+            k = k[:4] + [-x for x in k[4:]]
+        clean.append([round(x, 6) for x in k])
+        last_t = k[0]
+    return clean
+
+
+def sample_keys(keys, frames):
+    """Pose at the given (possibly fractional) frames, linear between keys."""
+    ts = np.array([k[0] for k in keys])
+    vals = np.array([k[1:] for k in keys])
+    out = []
+    for f in frames:
+        i = int(np.searchsorted(ts, f, side="right"))
+        if i <= 0:
+            row = vals[0]
+        elif i >= len(ts):
+            row = vals[-1]
+        else:
+            u = (f - ts[i - 1]) / max(1e-9, ts[i] - ts[i - 1])
+            p = vals[i - 1, :3] * (1 - u) + vals[i, :3] * u
+            row = np.concatenate([p, slerp(vals[i - 1, 3:], vals[i, 3:], u)])
+        out.append([round(float(x), 6) for x in row])
+    return out

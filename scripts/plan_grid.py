@@ -40,7 +40,11 @@ def split_cuts(ext, C):
     return cuts
 
 
-FIRST_CUT_S = 0.5   # every level opens on calm, clearly separate strokes
+FIRST_CUT_FRAMES = 6.0   # every level opens on one stroke every 6 frames (calm, readable)
+CALM_CUTS = 4            # strokes at the calm rhythm before the acceleration
+AXIS_PAUSE_S = 0.35      # the knife turns to the next cutting direction
+MIN_FWD_FRAMES = 0.12    # fastest stroke through the object (a blur streak)
+MAX_FWD_FRAMES = 4.0     # slowest stroke: a deliberate, clean chop
 
 
 def level_seconds(C):
@@ -65,7 +69,7 @@ def cut_schedule(n, frames, first, ramp=0.6):
 
     if r0 * frames >= n:          # small level: even pacing already fits
         return (np.arange(1, n + 1) * frames / n).tolist()
-    lo_a, hi_a = 1e-6, 2.0
+    lo_a, hi_a = 1e-6, 40.0 / (ramp * frames)
     for _ in range(60):
         a = (lo_a + hi_a) / 2
         if done(a)[-1] < n:
@@ -118,8 +122,8 @@ def _plan(cfg, ts=1.0):
     knife_scale = float(min(1.3, max(0.85, width_needed * 1.05 / (KT.EDGE_X[-1] - KT.EDGE_X[0]))))
     resistance = KT.RESISTANCE.get(cfg["object_type"], 0.5)
     safe_r = radius * 1.25 + 0.03
-    prev_ready = None
-    last_end = 0
+    knife_keys = []
+    prev_blade = first_blade = None
     frame = 1
     intro = int(0.4 * fps)   # first cut within half a second: the hook is the action itself
     for li, C in enumerate(cfg["cuts_sequence"]):
@@ -139,11 +143,7 @@ def _plan(cfg, ts=1.0):
                 [(1, k) for k in range(1, cuts[1] + 1)] + \
                 [(2, k) for k in range(cuts[2], 0, -1)]
         n_cuts = max(1, len(order))
-        targets = cut_schedule(n_cuts, level_seconds(C) * ts * fps, FIRST_CUT_S * fps)
         pose = KT.Pose(0.0, centre, height / 2)
-        cut_frames = [f] * n_cuts
-        cut_group = [0] * n_cuts
-        lvl_blades = []
 
         def stroke_for(j):
             ax, k = order[j]
@@ -151,54 +151,57 @@ def _plan(cfg, ts=1.0):
             p_obj[ax] = lo[ax] + ext[ax] * k / n[ax]
             normal = np.zeros(3)
             normal[ax] = 1.0
-            return KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
+            st = KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
+            inward = 1.0 if k < n[ax] / 2 else -1.0
+            for nudge in (0.005, 0.01, 0.02, 0.04, 0.07, 0.1):   # plane grazing the outline:
+                if st is not None:                    # move the blade inwards (fraction of the
+                    break                             # object), a real stroke still lands
+                p_obj[ax] = lo[ax] + ext[ax] * (k / n[ax] + inward * nudge)
+                st = KT.plan_stroke(shape, pose, p_obj, normal, radius, knife_scale, 0.0)
+            return st
 
-        # One real blade pass per cut while the rhythm allows it. The cut rate accelerates
-        # through the level; once it outruns the fastest possible stroke, each pass takes
-        # every cut that is due before it leaves the object (the counter still climbs 1 by 1).
-        cursor, j, gi = f, 0, 0
-        passes = []
-        while j < n_cuts:
-            st = stroke_for(j)
-            if st is None:   # plane grazing the outline: the cut lands without its own pass
-                cut_frames[j] = int(round(max(cursor, f + targets[j])))
-                cut_group[j] = gi
-                cursor = cut_frames[j]
-                j, gi = j + 1, gi + 1
+        # ONE REAL KNIFE STROKE PER CUT. The blade marches plane by plane through the object;
+        # the first strokes come every FIRST_CUT_FRAMES (calm, readable), then the rhythm
+        # accelerates until several strokes fall inside one frame: the knife then renders as a
+        # motion-blurred streak (real Cycles motion blur on sub-frame keys), every stroke at
+        # its own exact time, and the counter climbs by exactly one per stroke.
+        # the first strokes keep the calm guide rhythm, then the ramp starts
+        calm = min(n_cuts, CALM_CUTS)
+        targets = [FIRST_CUT_FRAMES * (i + 1) for i in range(calm)]
+        if n_cuts > calm:
+            # never slower than the calm rhythm: the stroke rate always climbs after the opening
+            rest = min(0.75 * FIRST_CUT_FRAMES * (n_cuts - calm),
+                       max(2 * MIN_FWD_FRAMES * (n_cuts - calm), level_seconds(C) * ts * fps - targets[-1]))
+            targets += [targets[-1] + x for x in cut_schedule(n_cuts - calm, rest, FIRST_CUT_FRAMES)]
+        t_contact, shift = [], 0.0
+        for j in range(n_cuts):
+            if j and order[j][0] != order[j - 1][0]:
+                shift += AXIS_PAUSE_S * fps * max(ts, 0.6)   # the knife turns to the next direction
+            t_contact.append(f + targets[j] + shift)
+        planned = [stroke_for(j) for j in range(n_cuts)]
+        lvl_blades = []
+        for j, st in enumerate(planned):
+            if st is None:
                 continue
-            p1, q1 = KT.ready_pose(st)
-            fly = KT.transit_frames(prev_ready[0], prev_ready[1], p1, q1, centre, safe_r) if prev_ready else 0
-            ready = max(cursor, last_end + fly)   # the blade flies in during the transition
-            end = max(ready + KT.fast_frames(st), int(round(f + targets[j])) + 3)
-            if end - ready >= KT.body_frames(st):
-                tm = KT.timing(ready, end, resistance, KT.retract_frames(st))
-            else:
-                tm = KT.quick_timing(ready, end, st)
-            k = j + 1
-            while k < n_cuts and f + targets[k] <= end and order[k][0] == order[j][0]:
-                k += 1
-            g = list(range(j, k))
-            st.update(level=li, axis=int(order[j][0]), group_cuts=len(g),
-                      resistance=resistance, time=tm)
+            gap_prev = t_contact[j] - t_contact[j - 1] if j else FIRST_CUT_FRAMES
+            gap_next = t_contact[j + 1] - t_contact[j] if j + 1 < n_cuts else gap_prev
+            gap = min(gap_prev, gap_next)
+            fwd = min(MAX_FWD_FRAMES, max(MIN_FWD_FRAMES, 0.5 * gap))
+            travel = st["s_end"] - st["s_ready"]
+            v = travel / fwd
+            a = t_contact[j] - (st["s_in"] - st["s_ready"]) / v
+            st.update(level=li, axis=int(order[j][0]), group_cuts=1, resistance=resistance,
+                      time={"ready": a, "contact": t_contact[j],
+                            "exit": a + (st["s_out"] - st["s_ready"]) / v,
+                            "sep_end": a + fwd, "gap": gap})
             lvl_blades.append(st)
-            passes.append((g, tm))
-            for jj in g:
-                cut_group[jj] = gi
-            prev_ready = (p1, q1)
-            cursor, j, gi, last_end = end, k, gi + 1, end
-        # The counter climbs one cut at a time: a single cut lands as the edge leaves the
-        # object; a fast pass carrying many cuts keeps them coming, one per frame or more,
-        # until the next pass touches the object, so the count never jumps by a block.
-        for i, (g, tm) in enumerate(passes):
-            c0, x0 = tm["contact"], tm["exit"]
-            if len(g) <= x0 - c0 + 1:
-                span_end = x0
-            else:
-                span_end = passes[i + 1][1]["contact"] - 1 if i + 1 < len(passes) else tm["retract_end"]
-            for q, jj in enumerate(g):
-                cut_frames[jj] = int(round(c0 + (span_end - c0) * (q + 1) / len(g)))
-        cut_frames = np.maximum.accumulate(np.asarray(cut_frames, int)).tolist()
-        dur = cursor - f
+        knife_keys.extend(KT.chop_keys(lvl_blades, centre, safe_r, prev=prev_blade))
+        if lvl_blades:
+            first_blade = first_blade or lvl_blades[0]
+            prev_blade = lvl_blades[-1]
+        cut_frames = [int(math.ceil(t)) for t in t_contact]
+        cut_group = list(range(n_cuts))
+        dur = int(math.ceil(t_contact[-1])) + 2 - f
         blade_strokes.extend(lvl_blades)
         active = [0, 0, 0]
         z_done = 0
@@ -245,13 +248,15 @@ def _plan(cfg, ts=1.0):
     # so the last frame flows into the first one when TikTok/Reels replays the video
     loop_in = frame
     total = frame + int(1.0 * fps)
+    keys = KT.close_loop(knife_keys, first_blade, prev_blade, total, centre, safe_r) if first_blade else []
     return {
         "version": 3, "kind": "grid", "config": cfg, "fps": fps,
         "total_frames": int(total), "duration_s": total / fps,
         "levels": levels, "strokes": strokes, "loop_in": int(loop_in),
         "blade_strokes": blade_strokes, "knife_scale": knife_scale,
         "object_centre": centre.tolist(),
-        "knife_track": KT.build_track(blade_strokes, int(total), centre, safe_r),
+        "knife_keys": keys,
+        "knife_track": KT.sample_keys(keys, range(1, int(total) + 1)),
         "counters": {"cuts": cuts_ev, "pieces": pieces_ev},
         "stats": {"levels": len(levels), "blade_strokes": len(strokes),
                   "final_cubes": levels[-1]["cubes"] if levels else 0,

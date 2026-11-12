@@ -578,10 +578,13 @@ def build_grid_scene(plan, out_dir):
     height = float(hi[2] - lo[2])
     knife.scale = (plan["knife_scale"],) * 3
     B.interp("LINEAR")
-    for i, row in enumerate(plan.get("knife_track", [])):
-        f = i + 1
-        knife.location = row[:3]
-        knife.rotation_quaternion = row[3:]
+    # one real stroke per cut, keyed at its exact (often sub-frame) times; the render's motion
+    # blur samples these keys inside each frame, so fast phases show the true blur of every stroke
+    keys = plan.get("knife_keys") or [[i + 1, *row] for i, row in enumerate(plan.get("knife_track", []))]
+    for row in keys:
+        f = float(row[0])
+        knife.location = row[1:4]
+        knife.rotation_quaternion = row[4:8]
         knife.keyframe_insert("location", frame=f)
         knife.keyframe_insert("rotation_quaternion", frame=f)
 
@@ -663,6 +666,7 @@ def build_grid_scene(plan, out_dir):
 
     cam = grid_camera(plan, lo, hi, board_size)
     B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"])
+    enable_knife_motion_blur(scn, knife)
     B.setup_render(scn, cfg, out_dir, final=False)
     report["final_pieces_validated"] = report["levels"][-1]["cubes_built"] if report["levels"] else 0
     report["target"] = plan["levels"][-1]["cubes"] if plan["levels"] else 0

@@ -55,7 +55,7 @@ def test_grid_audio_rhythm_and_levels():
         assert info["clipped_samples"] == 0
         ev = json.load(open(os.path.join(d, "audio_events.json")))["events"]
         ts = sorted(e["t"] for e in ev if e["type"] == "contact")
-        assert min(b - a for a, b in zip(ts, ts[1:])) >= 0.09   # <= ~10 chops per second
+        assert len(ts) == 64, "one chop per real stroke"
         assert sum(e["type"] == "surface_contact" for e in ev) == 2
 
 

@@ -184,12 +184,15 @@ def grid_events(plan, buf, P, rng, samples, events, t_of):
         tm = bs["time"]
         c, x = tm["contact"], tm["exit"]
         nh = bs["group_cuts"]
-        place(buf, max(0.0, t_of(c) - 0.16), whoosh(rng), 0.0, rng.uniform(0.5, 0.8))
-        events.append({"t": max(0.0, t_of(c) - 0.16), "type": "approach", "frame": c})
+        gap = tm.get("gap", 99.0)            # frames to the neighbouring stroke (chop rhythm)
+        if gap >= 3:                         # a whoosh only while strokes are still separate
+            place(buf, max(0.0, t_of(c) - 0.16), whoosh(rng), 0.0, rng.uniform(0.5, 0.8))
+            events.append({"t": max(0.0, t_of(c) - 0.16), "type": "approach", "frame": c})
         pos = bs["anchor"][0]
         pan = float(np.clip(pos / 0.12, -0.6, 0.6))
         dur = max(0.03, (x - c) / fps)
         gain = rng.uniform(0.85, 1.05) * (1.0 if nh == 1 else min(1.3, 0.85 + 0.12 * np.log2(nh)))
+        gain *= float(np.clip(np.sqrt(gap / 6.0), 0.18, 1.0))   # dense chopping blends into a roll
         place(buf, t_of(c), chop(rng, P, samples, dur, nh), pan, gain)
         events.append({"t": t_of(c), "type": "contact", "frame": c, "strokes": nh})
         events.append({"t": t_of(x), "type": "end_of_cut", "frame": x, "strokes": nh})

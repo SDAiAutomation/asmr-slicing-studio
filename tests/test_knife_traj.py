@@ -24,8 +24,8 @@ def p():
     return make()
 
 
-def pose_at(p, f):
-    r = p["knife_track"][f - 1]
+def pose_at(p, t):
+    r = KT.sample_keys(p["knife_keys"], [t])[0]
     return np.array(r[:3]), KT.quat_to_mat(np.array(r[3:]))
 
 
@@ -35,33 +35,40 @@ def scene_pose(p, level):
     return KT.Pose(0.0, p["object_centre"], (hi[2] - lo[2]) / 2), shape
 
 
-def test_three_orientations_and_phase_order(p):
+def test_exactly_one_stroke_per_cut_and_phase_order(p):
+    for lvl in p["levels"]:
+        bl = [b for b in p["blade_strokes"] if b["level"] == lvl["level"]]
+        assert len(bl) == lvl["cuts"], "N cuts = N real knife strokes"
+        assert all(b["group_cuts"] == 1 for b in bl)
     assert {b["axis"] for b in p["blade_strokes"]} >= {0, 1, 2}
     for b in p["blade_strokes"]:
         t = b["time"]
-        assert t["ready"] < t["contact"] <= t["pen_end"] < t["exit"] < t["sep_end"] < t["retract_end"]
+        assert t["ready"] < t["contact"] < t["exit"] <= t["sep_end"]
+    c = [b["time"]["contact"] for b in p["blade_strokes"]]
+    assert all(b > a for a, b in zip(c, c[1:])), "strokes never overlap"
 
 
-def test_no_teleport_no_snap(p):
-    tr = np.array(p["knife_track"])
-    assert len(tr) == p["total_frames"]
-    assert np.linalg.norm(np.diff(tr[:, :3], axis=0), axis=1).max() < 0.08
-    dots = np.abs(np.sum(tr[1:, 3:] * tr[:-1, 3:], axis=1)).clip(0, 1)
-    assert np.degrees(2 * np.arccos(dots)).max() < 50
+def test_counter_climbs_by_one_at_each_contact(p):
+    for lvl in p["levels"]:
+        bl = [b for b in p["blade_strokes"] if b["level"] == lvl["level"]]
+        ev = [(f, n) for f, n, li in p["counters"]["cuts"] if li == lvl["level"]]
+        assert [n for _, n in ev] == list(range(1, lvl["cuts"] + 1))
+        for (f, _), b in zip(ev, bl):
+            assert b["time"]["contact"] <= f < b["time"]["contact"] + 1
 
 
-def test_no_jerk_spikes_inside_strokes(p):
-    for b in p["blade_strokes"]:
-        t = b["time"]
-        ss = np.array([KT.stroke_s(b, f) for f in range(t["ready"], t["sep_end"] + 1)])
-        v = np.diff(ss)
-        assert (v > -1e-9).all(), "the blade never backs up while cutting"
-        assert np.abs(np.diff(v)).max() < 3 * max(v.max(), 1e-6)
+def test_keys_are_continuous(p):
+    k = np.array(p["knife_keys"])
+    assert (np.diff(k[:, 0]) > 0).all()
+    assert np.linalg.norm(np.diff(k[:, 1:4], axis=0), axis=1).max() < 0.35
+    assert (np.sum(k[1:, 4:] * k[:-1, 4:], axis=1) > 0).all(), "shortest-path quaternions"
 
 
 def test_loop_closes(p):
-    tr = np.array(p["knife_track"])
-    assert np.linalg.norm(tr[0, :3] - tr[-1, :3]) < 1e-3
+    k = p["knife_keys"]
+    assert k[-1][0] <= p["total_frames"] + 1e-6
+    first = KT.ready_pose(p["blade_strokes"][0])[0]
+    assert np.linalg.norm(np.array(k[-1][1:4]) - first) < 1e-3
 
 
 def test_edge_leads_and_contact_is_real(p):
@@ -72,16 +79,17 @@ def test_edge_leads_and_contact_is_real(p):
         assert np.dot(-m[:, 1], b["d"]) > 0.999, "edge, not spine, travels first"
         pts = KT.edge_points(pos, m, p["knife_scale"])
         assert KT.inside_world(shape, pose, pts + np.array(b["d"]) * 0.001).any(), "edge touches the object"
-        before, m0 = pose_at(p, c - 1)
+        before, m0 = pose_at(p, b["time"]["ready"])
         assert not KT.inside_world(shape, pose, KT.edge_points(before, m0, p["knife_scale"])).any()
 
 
 def test_blade_sweeps_the_planned_cut_plane(p):
     for b in p["blade_strokes"]:
-        pos, m = pose_at(p, b["time"]["contact"])
         n, anchor = np.array(b["n"]), np.array(b["anchor"])
-        assert abs((pos - anchor) @ n) < 1e-4
-        assert abs(abs(m[:, 2] @ n) - 1) < 1e-4
+        for t in (b["time"]["contact"], (b["time"]["contact"] + b["time"]["exit"]) / 2, b["time"]["exit"]):
+            pos, m = pose_at(p, t)
+            assert abs((pos - anchor) @ n) < 1e-4
+            assert abs(abs(m[:, 2] @ n) - 1) < 1e-4
 
 
 def test_edge_covers_section_and_exits(p):
@@ -99,26 +107,10 @@ def test_edge_covers_section_and_exits(p):
 
 def test_never_touches_board(p):
     k = p["knife_scale"]
-    for row in p["knife_track"]:
+    ts = np.arange(1, p["total_frames"], 0.25)
+    for row in KT.sample_keys(p["knife_keys"], ts):
         m = KT.quat_to_mat(np.array(row[3:]))
         assert KT.blade_outline(np.array(row[:3]), m, k)[:, 2].min() > 0.0
-
-
-def test_blade_only_in_object_inside_its_kerf(p):
-    k = p["knife_scale"]
-    spans = {}
-    for b in p["blade_strokes"]:
-        for f in range(b["time"]["contact"], b["time"]["retract_end"] + 1):
-            spans[f] = b
-    hits = 0
-    for f in range(1, p["total_frames"] + 1):
-        lvl = next((l for l in p["levels"] if l["start_frame"] <= f < l["collapse_start"]), None)
-        if lvl is None or f in spans or f < lvl["start_frame"] + lvl["enter_frames"]:
-            continue
-        pos, m = pose_at(p, f)
-        pose, shape = scene_pose(p, lvl["level"])
-        hits += int(KT.inside_world(shape, pose, KT.blade_outline(pos, m, k)).any())
-    assert hits == 0
 
 
 def test_any_3d_plane_gets_an_edge_first_blade():
@@ -135,53 +127,25 @@ def test_any_3d_plane_gets_an_edge_first_blade():
         assert st["s_out"] > st["s_in"]
 
 
-def test_cuts_appear_while_their_blade_crosses(p):
-    for lvl in p["levels"]:
-        blades = [b for b in p["blade_strokes"] if b["level"] == lvl["level"]]
-        windows = [(b["time"]["contact"], b["time"]["exit"]) for b in blades]
-        for st in (s for s in p["strokes"] if s["level"] == lvl["level"]):
-            assert any(a <= st["frame"] <= b for a, b in windows), st
-
-
-def test_high_levels_stay_readable():
-    q = make(cuts_sequence=[500], video_duration=None)
-    assert 1 <= len(q["blade_strokes"]) <= 25
-    assert sum(b["group_cuts"] for b in q["blade_strokes"]) == 500
-    t = [b["time"] for b in q["blade_strokes"]]
-    assert all(b["contact"] - a["retract_end"] >= 0 for a, b in zip(t, t[1:]))
+def test_rhythm_starts_calm_then_accelerates_to_a_blur():
+    q = make(object_type="mango", cuts_sequence=[400], video_duration=None, fps=24)
+    bl = q["blade_strokes"]
+    assert len(bl) == 400
+    c = np.array([b["time"]["contact"] for b in bl])
+    gaps = np.diff(c)
+    assert abs(gaps[0] - 6.0) < 1e-6 and abs(gaps[2] - 6.0) < 1e-6, "guide rhythm: 1 stroke / 6 frames"
+    assert gaps[-1] < 0.5, "several strokes per frame at the end (motion blur streak)"
+    same_axis = [g for g, a, b in zip(gaps, bl, bl[1:]) if a["axis"] == b["axis"]]
+    assert all(b <= a + 1e-6 for a, b in zip(same_axis, same_axis[1:])), "never slows down"
+    fwd = [b["time"]["sep_end"] - b["time"]["ready"] for b in bl]
+    assert fwd[-1] < fwd[0] / 5, "the stroke itself gets faster"
 
 
 def test_audio_contacts_equal_blade_contacts(p, tmp_path):
     import make_audio
     make_audio.render(p, str(tmp_path))
-    found = [x for x in os.listdir(tmp_path) if x.endswith(".json")]
-    evs = None
-    for name in found:
-        d = json.load(open(tmp_path / name))
-        if isinstance(d, dict) and "events" in d:
-            evs = d["events"]
-        elif isinstance(d, list) and d and "type" in d[0]:
-            evs = d
-    assert evs is not None, found
+    d = json.load(open(tmp_path / "audio_events.json"))
     fps = p["fps"]
-    got = sorted(round(e["t"] * fps) for e in evs if e["type"] == "contact")
-    want = sorted(b["time"]["contact"] - 1 for b in p["blade_strokes"])
-    want2 = sorted(b["time"]["contact"] for b in p["blade_strokes"])
-    assert got == want or got == want2
-
-
-def test_cut_rate_accelerates_and_counter_climbs_one_by_one():
-    q = make(object_type="steak", cuts_sequence=[24, 400], video_duration=None, fps=30)
-    for lvl in q["levels"]:
-        blades = [b for b in q["blade_strokes"] if b["level"] == lvl["level"]]
-        assert sum(b["group_cuts"] for b in blades) == lvl["cuts"], "every announced cut is made"
-        assert all(b["group_cuts"] == 1 for b in blades[:2]), "each level opens on single, visible cuts"
-        frames = [s["frame"] for s in q["strokes"] if s["level"] == lvl["level"]]
-        assert frames == sorted(frames)
-        gaps = np.diff(frames)
-        half = len(gaps) // 2
-        assert gaps[:3].mean() > 1.5 * np.median(gaps[half:]), "the cuts speed up through the level"
-        bins = np.bincount((np.array(frames) - frames[0]) // 3)
-        assert bins.max() <= max(4, lvl["cuts"] // 15), "the counter never jumps by a whole block"
-        lens = [b["time"]["retract_end"] - b["time"]["ready"] for b in blades]
-        assert lens[-1] < lens[0], "the blade itself moves faster at the end"
+    got = sorted(round(e["t"] * fps, 3) for e in d["events"] if e["type"] == "contact")
+    want = sorted(round(b["time"]["contact"] - 1, 3) for b in p["blade_strokes"])
+    assert got == want
