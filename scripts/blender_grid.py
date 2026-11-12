@@ -542,11 +542,9 @@ def build_grid_scene(plan, out_dir):
     scn.render.fps = fps
     scn.frame_start, scn.frame_end = 1, plan["total_frames"]
     lo, hi = shape.bbox()
-    span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
     board_size = B.BOARD_SIZE
     B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
 
-    levitate = cfg["format"] == "levitate"
     steak = getattr(shape, "kind", "") == "extruded"
     if steak:
         mats = steak_materials(M)
@@ -555,7 +553,7 @@ def build_grid_scene(plan, out_dir):
     params = {}
     seam_sets = []
     for mt in {id(m): m for m in mats}.values():
-        add_seams(mt, {}, seam_sets, (0.95, 0.78, 0.55, 1) if levitate and not is_cake(M) else (0.03, 0.006, 0.004, 1))
+        add_seams(mt, {}, seam_sets)
     me = object_mesh(shape, "Object")
     for mt in mats:
         me.materials.append(mt)
@@ -564,22 +562,6 @@ def build_grid_scene(plan, out_dir):
     ng, ids = collapse_group(cmat)
     knife = B.build_knife()
     kmat = bpy.data.materials["Steel"]
-    lift = 0.0
-    frame_obj = None
-    pivot = None
-    extra_knives = []
-    centre = Vector((0.0, 0.0, 0.0))
-    if levitate:
-        lift = float(plan["lift"])
-        centre = Vector(plan["object_centre"])
-        pivot = bpy.data.objects.new("Pivot", None)
-        scn.collection.objects.link(pivot)
-        pivot.location = centre
-        pivot.rotation_mode = "XYZ"
-        frame_obj = bpy.data.objects.new("ObjectFrame", None)
-        scn.collection.objects.link(frame_obj)
-        frame_obj.parent = pivot
-        frame_obj.location = (0.0, 0.0, -float(hi[2] - lo[2]) / 2)
     report = {"levels": [], "failures": []}
 
     def key_param(name, frame, value):
@@ -602,10 +584,6 @@ def build_grid_scene(plan, out_dir):
         knife.rotation_quaternion = row[3:]
         knife.keyframe_insert("location", frame=f)
         knife.keyframe_insert("rotation_quaternion", frame=f)
-    if levitate:
-        for i, off in enumerate(plan.get("object_reaction", [])):
-            pivot.location = centre + Vector(off)
-            pivot.keyframe_insert("location", frame=i + 1)
 
     for lvl in plan["levels"]:
         li = lvl["level"]
@@ -623,12 +601,6 @@ def build_grid_scene(plan, out_dir):
 
         ob = bpy.data.objects.new(f"Level_{li:02d}", me)
         scn.collection.objects.link(ob)
-        if levitate:
-            ob.parent = frame_obj
-            # the object holds still while the blade works: fixed yaw per level
-            B.interp("CONSTANT")
-            pivot.rotation_euler = (0.0, 0.0, lvl["yaw"])
-            pivot.keyframe_insert("rotation_euler", frame=start)
         B.set_visibility(ob, start, lvl["collapse_start"])
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
@@ -659,24 +631,9 @@ def build_grid_scene(plan, out_dir):
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
         B.interp("BEZIER")
         mod[ids["Collapse"]] = 0.0
-        # levitate: the pieces burst apart in the air for a beat, then drop on the board
-        drop = lvl["collapse_start"] + (int(0.2 * fps) if levitate else 0)
-        cob.keyframe_insert(data_path=path, frame=drop)
+        cob.keyframe_insert(data_path=path, frame=lvl["collapse_start"])
         mod[ids["Collapse"]] = 1.0
         cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
-        if levitate:
-            cob.rotation_euler = (0.0, 0.0, lvl["yaw"])
-            cob.location = (0, 0, lift)
-            cob.keyframe_insert("location", frame=lvl["collapse_start"])
-            cob.keyframe_insert("location", frame=drop)
-            cob.scale = (1, 1, 1)
-            cob.keyframe_insert("scale", frame=lvl["collapse_start"])
-            cob.scale = (1.14, 1.14, 1.14)
-            cob.keyframe_insert("scale", frame=drop)
-            cob.location = (0, 0, 0)
-            cob.keyframe_insert("location", frame=lvl["collapse_end"])
-            cob.scale = (1, 1, 1)
-            cob.keyframe_insert("scale", frame=lvl["collapse_end"])
         cob.location = (0, 0, 0)
         cob.keyframe_insert("location", frame=lvl["exit_start"])
         cob.location = (-0.6, 0, 0)
@@ -690,7 +647,6 @@ def build_grid_scene(plan, out_dir):
         lf, tot = plan["loop_in"], plan["total_frames"]
         ob = bpy.data.objects.new("LoopObject", me)
         scn.collection.objects.link(ob)
-        ob.parent = frame_obj
         B.set_visibility(ob, lf, None)
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0)
@@ -705,7 +661,7 @@ def build_grid_scene(plan, out_dir):
         cuts_ev.append((lf, 0, li0["cuts"]))
         pieces_ev.append((lf, 1))
 
-    cam = grid_camera(plan, lo, hi, board_size, lift)
+    cam = grid_camera(plan, lo, hi, board_size)
     B.build_overlay(cam, cfg, cuts_ev, pieces_ev, plan["total_frames"])
     B.setup_render(scn, cfg, out_dir, final=False)
     report["final_pieces_validated"] = report["levels"][-1]["cubes_built"] if report["levels"] else 0
@@ -717,7 +673,7 @@ def build_grid_scene(plan, out_dir):
     return report
 
 
-def grid_camera(plan, lo, hi, board_size, lift=0.0):
+def grid_camera(plan, lo, hi, board_size):
     """Whole board in frame (~92 % of the width), object centred, slight depth of field."""
     cd = bpy.data.cameras.new("Camera")
     cd.lens = 50
@@ -729,24 +685,12 @@ def grid_camera(plan, lo, hi, board_size, lift=0.0):
     vfov = 2 * math.atan(18 / 50)
     hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
     half_w = board_size[0] / 2 / 0.92
-    elev, azim = math.radians(22 if lift else 34), math.radians(-90)
+    elev, azim = math.radians(34), math.radians(-90)
     view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
-    target = Vector((0, 0.01, 0.01 + lift * 0.7))
+    target = Vector((0, 0.01, 0.01))
     dist = half_w / math.tan(hfov / 2)
     cam.location = target + view * dist
     cam.rotation_mode = "QUATERNION"
     cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
-    if lift:   # push in while the blade works so the contact zone is clearly visible
-        close = Vector(plan["object_centre"]) + Vector((0, 0.01, -0.012)) + view * dist * 0.82
-        wide = cam.location.copy()
-        B.interp("BEZIER")
-        for lv in plan["levels"]:
-            ramp = max(3, int(0.25 * plan["fps"]))
-            for f, loc in ((lv["start_frame"], wide), (lv["strokes_start"], close),
-                           (lv["collapse_start"], close), (lv["collapse_start"] + ramp, wide)):
-                cam.location = loc
-                cam.keyframe_insert("location", frame=f)
-        cam.location = wide
-        cam.keyframe_insert("location", frame=plan["total_frames"])
     # no depth of field: the counters are camera-attached and must stay sharp
     return cam

@@ -1,10 +1,7 @@
-"""Blender side of the ASMR slicing studio (Blender 4.2+ / 5.x, background mode).
+"""Blender entry point of the ASMR slicing studio (Blender 4.2+ / 5.x, background mode).
 
-Replays plan.json cut by cut on real meshes:
-  root mesh -> bisect -> cap -> split loose parts -> validate -> next cut
-so every piece on screen is the actual geometric result of the previous state.
-The on-screen counter is driven by the number of validated mesh parts, not by
-the planner's expectation.
+Shared scene pieces (board, lights, knife, materials, counters, render settings).
+The grid scene itself ("N CUTS -> X CUBES") is built by blender_grid.py.
 
 Usage:
   blender -b -P blender_build.py -- --plan plan.json --out RUN_DIR --stage build
@@ -18,11 +15,10 @@ import time
 
 import bpy
 import bmesh
-from mathutils import Matrix, Quaternion, Vector
+from mathutils import Matrix, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from common import MATERIALS, OBJECTS  # noqa: E402
 
 
 def args():
@@ -194,22 +190,6 @@ def simple_mat(name, color, rough=0.5, metal=0.0, emit=None):
     return mat
 
 
-def wood_mat():
-    mat, nt, bsdf = principled("Board")
-    L = nt.links
-    tc = nt.nodes.new("ShaderNodeTexCoord")
-    wave = nt.nodes.new("ShaderNodeTexWave")
-    set_input(wave, "Scale", 4.0)
-    set_input(wave, "Distortion", 3.0)
-    set_input(wave, "Detail", 6.0)
-    L.new(tc.outputs["Object"], wave.inputs["Vector"])
-    r = ramp(nt, [(0.0, (0.30, 0.16, 0.07)), (1.0, (0.42, 0.24, 0.11))])
-    L.new(wave.outputs["Fac"], r.inputs["Fac"])
-    L.new(r.outputs["Color"], bsdf.inputs["Base Color"])
-    set_input(bsdf, "Roughness", 0.55)
-    return mat
-
-
 # ---------------------------------------------------------------------------
 # geometry
 # ---------------------------------------------------------------------------
@@ -244,84 +224,6 @@ def build_root_mesh(shape, n_lat=72, n_lon=112):
     return bm
 
 
-def islands(bm):
-    seen, out = set(), []
-    for f in bm.faces:
-        if f in seen:
-            continue
-        stack, comp = [f], []
-        seen.add(f)
-        while stack:
-            g = stack.pop()
-            comp.append(g)
-            for e in g.edges:
-                for h in e.link_faces:
-                    if h not in seen:
-                        seen.add(h)
-                        stack.append(h)
-        out.append(comp)
-    return out
-
-
-def bm_subset(faces):
-    nb = bmesh.new()
-    vmap = {}
-    for f in faces:
-        vs = []
-        for v in f.verts:
-            if v not in vmap:
-                vmap[v] = nb.verts.new(v.co)
-            vs.append(vmap[v])
-        nf = nb.faces.new(vs)
-        nf.material_index = f.material_index
-        nf.smooth = f.smooth
-    return nb
-
-
-def half(bm_src, co, no, keep_positive, rim):
-    b = bm_src.copy()
-    geom = b.verts[:] + b.edges[:] + b.faces[:]
-    bmesh.ops.bisect_plane(b, geom=geom, dist=1e-7, plane_co=co, plane_no=no,
-                           clear_inner=keep_positive, clear_outer=not keep_positive)
-    boundary = [e for e in b.edges if e.is_boundary]
-    caps = []
-    if boundary:
-        res = bmesh.ops.holes_fill(b, edges=boundary, sides=0)
-        caps = res["faces"]
-        for f in caps:
-            f.material_index = 1
-            f.smooth = False
-        if rim > 0 and caps:
-            ins = bmesh.ops.inset_region(b, faces=caps, thickness=rim, depth=0.0,
-                                         use_even_offset=True, use_boundary=True)
-            for f in ins["faces"]:
-                f.material_index = 2
-                f.smooth = False
-    bmesh.ops.recalc_face_normals(b, faces=b.faces[:])
-    parts = []
-    comps = islands(b)
-    if len(comps) == 1:
-        parts.append(b)
-    else:
-        for comp in comps:
-            parts.append(bm_subset(comp))
-        b.free()
-    return parts
-
-
-def validate(b):
-    nonman = sum(1 for e in b.edges if len(e.link_faces) != 2)
-    vol = b.calc_volume(signed=True)
-    c = Vector()
-    for v in b.verts:
-        c += v.co
-    c /= max(1, len(b.verts))
-    return {"non_manifold_edges": nonman, "volume": abs(vol), "volume_signed": vol, "center": c}
-
-
-# ---------------------------------------------------------------------------
-# animation helpers
-# ---------------------------------------------------------------------------
 def interp(kind):
     bpy.context.preferences.edit.keyframe_new_interpolation_type = kind
 
@@ -342,28 +244,6 @@ def set_visibility(obj, show_from, hide_from):
         key_visible(obj, hide_from, False)
 
 
-def key_location(obj, keys):
-    interp("BEZIER")
-    for f, off in keys:
-        obj.location = Vector(off)
-        obj.keyframe_insert("location", frame=f)
-
-
-def blade_quat(n, d):
-    n, d = Vector(n).normalized(), Vector(d).normalized()
-    Y = -d
-    Z = n
-    X = Y.cross(Z).normalized()
-    if X.x < 0:  # keep the handle on the right of the frame
-        Z = -Z
-        X = Y.cross(Z).normalized()
-    m = Matrix((X, Y, Z)).transposed()
-    return m.to_quaternion()
-
-
-# ---------------------------------------------------------------------------
-# scene
-# ---------------------------------------------------------------------------
 ASSETS = os.path.join(HERE, "..", "assets", "cache")
 
 
@@ -543,155 +423,6 @@ def setup_environment(scn, board_size=BOARD_SIZE, brand=""):
     return board
 
 
-def build_scene(plan, out_dir):
-    t0 = time.time()
-    cfg = plan["config"]
-    shape = OBJECTS[cfg["object_type"]]
-    M = MATERIALS[cfg["material_profile"]]
-    fps = plan["fps"]
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    scn = bpy.context.scene
-    scn.render.fps = fps
-    scn.frame_start, scn.frame_end = 1, plan["total_frames"]
-
-    extruded = getattr(shape, "kind", "") == "extruded"
-    if extruded:
-        import blender_grid
-        mats = blender_grid.steak_materials(M)
-    else:
-        skin, flesh = make_skin(M, shape), make_flesh(M)
-        rim = simple_mat("Rim", M["rim"], 0.35)
-        mats = [skin, flesh, rim]
-
-    setup_environment(scn, brand=cfg.get("board_watermark", ""))
-
-    # --- knife
-    knife = build_knife()
-
-    # --- pieces: replay the plan cut by cut
-    pieces = {p["id"]: p for p in plan["pieces"]}
-    bm_of = {}
-    obj_of = {}
-    report = {"hits": [], "failures": [], "non_manifold": 0, "mismatch_hits": 0}
-    root_ids = [p["id"] for p in plan["pieces"] if p["parent"] is None]
-    root_bm = blender_grid.extruded_mesh(shape) if extruded else build_root_mesh(shape)
-    root_vol = abs(root_bm.calc_volume(signed=True))
-    for rid in root_ids:
-        bm_of[rid] = root_bm.copy()
-        obj_of[rid] = make_piece_obj(rid, bm_of[rid], mats)
-    true_count = {}  # level -> current count
-    counter_events = []
-    for rid in root_ids:
-        lvl = pieces[rid]["level"]
-        true_count[lvl] = 1
-        counter_events.append((pieces[rid]["born_frame"] if lvl else 1, 1))
-    # blender-only extra parts get their own ids
-    extra_id = max(pieces) + 1
-    born, cut_at, keys_of, hide_at = {}, {}, {}, {}
-    for pid, p in pieces.items():
-        keys_of[pid] = p["keys"]
-        born[pid] = p["born_frame"]
-        cut_at[pid] = p["cut_frame"]
-        hide_at[pid] = p["hide_frame"]
-
-    rim_w = M["rim_width"]
-    for hi, h in enumerate(plan["hits"]):
-        pid = h["piece"]
-        if pid not in bm_of:
-            report["failures"].append({"hit": hi, "reason": "parent piece missing"})
-            continue
-        src = bm_of[pid]
-        co, no = Vector(h["plane_point"]), Vector(h["plane_normal"])
-        parts = half(src, co, no, False, rim_w) + half(src, co, no, True, rim_w)
-        info = [validate(b) for b in parts]
-        good = [(b, i) for b, i in zip(parts, info) if i["volume"] > 1e-10]
-        if len(good) < 2:
-            # the planned plane misses the real mesh (voxel vs mesh shape): make the same
-            # cut through the mesh's own centre instead - still a real, verified cut
-            centre = validate(src)["center"]
-            parts = half(src, centre, no, False, rim_w) + half(src, centre, no, True, rim_w)
-            info = [validate(b) for b in parts]
-            good = [(b, i) for b, i in zip(parts, info) if i["volume"] > 1e-10]
-            report.setdefault("recentred_cuts", 0)
-            report["recentred_cuts"] += 1
-        kids = h["children"]
-        # match blender parts to planned children by nearest centroid
-        unused = list(kids)
-        assigned = []
-        for b, i in sorted(good, key=lambda t: -t[1]["volume"]):
-            if unused:
-                best = min(unused, key=lambda k: (Vector(pieces[k]["centroid"]) - i["center"]).length)
-                unused.remove(best)
-                assigned.append((best, b, i))
-            else:  # blender found an extra part the planner did not see
-                near = min(kids, key=lambda k: (Vector(pieces[k]["centroid"]) - i["center"]).length)
-                nid = extra_id
-                extra_id += 1
-                keys_of[nid], born[nid], cut_at[nid], hide_at[nid] = keys_of[near], born[near], None, hide_at.get(near)
-                assigned.append((nid, b, i))
-        if unused or len(good) != len(kids):
-            report["mismatch_hits"] += 1
-        for k in unused:
-            report["failures"].append({"hit": hi, "reason": f"planned piece {k} has no mesh part"})
-        for cid, b, i in assigned:
-            report["non_manifold"] += int(i["non_manifold_edges"] > 0)
-            bm_of[cid] = b
-            obj_of[cid] = make_piece_obj(cid, b, mats)
-        lvl = h["level"]
-        true_count[lvl] += len(assigned) - 1
-        counter_events.append((h["exit_frame"], true_count[lvl]))
-        report["hits"].append({"hit": hi, "parts": len(assigned), "planned": len(kids),
-                               "count": true_count[lvl]})
-        src.free()
-        del bm_of[pid]
-
-    # visibility + motion
-    for pid, ob in obj_of.items():
-        set_visibility(ob, born[pid] or 1, cut_at.get(pid) or hide_at.get(pid))
-        key_location(ob, keys_of[pid])
-
-    # final validation on what is left
-    final_vol = sum(abs(b.calc_volume(signed=True)) for b in bm_of.values())
-    last_level = max(true_count)
-    report.update({
-        "final_pieces_validated": true_count[last_level],
-        "target": cfg["target_piece_count"],
-        "volume_root": root_vol,
-        "volume_final": final_vol,
-        "volume_error_pct": (round(100 * abs(final_vol / root_vol - 1), 4)
-                             if cfg["cutting_mode"] == "cumulative" else None),
-        "objects": len(obj_of),
-    })
-
-    animate_knife(knife, plan, pieces, keys_of)
-    cam = build_camera(plan, cfg)
-    cuts_events, done = [], {}
-    per_level = {}
-    for h in plan["hits"]:
-        per_level[h["level"]] = per_level.get(h["level"], 0) + 1
-    for p_ in plan["pieces"]:
-        if p_["parent"] is None:
-            cuts_events.append((p_["born_frame"] if p_["level"] else 1, 0, per_level.get(p_["level"])))
-    for h in plan["hits"]:
-        done[h["level"]] = done.get(h["level"], 0) + 1
-        cuts_events.append((h["exit_frame"], done[h["level"]], per_level[h["level"]]))
-    build_overlay(cam, cfg, cuts_events, counter_events, plan["total_frames"])
-    setup_render(scn, cfg, out_dir, final=False)
-    report["build_seconds"] = round(time.time() - t0, 2)
-    report["counter_events"] = counter_events
-    return report
-
-
-def make_piece_obj(pid, b, mats):
-    me = bpy.data.meshes.new(f"piece_{pid:05d}")
-    b.to_mesh(me)
-    for m in mats:
-        me.materials.append(m)
-    ob = bpy.data.objects.new(f"piece_{pid:05d}", me)
-    bpy.context.scene.collection.objects.link(ob)
-    return ob
-
-
 def build_knife():
     """Chef's knife as ONE mesh (copies keep the handle): curved belly, ground bevel, bolster,
     riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
@@ -751,98 +482,6 @@ def build_knife():
     blade.rotation_mode = "QUATERNION"
     blade.scale = (0.85, 0.85, 0.85)
     return blade
-
-
-def animate_knife(knife, plan, pieces, keys_of):
-    fps = plan["fps"]
-    park = Vector((0.35, -0.10, 0.25))
-    interp("BEZIER")
-    knife.location = park
-    knife.rotation_quaternion = blade_quat((0, 1, 0), (0, 0, -1))
-    knife.keyframe_insert("location", frame=1)
-    knife.keyframe_insert("rotation_quaternion", frame=1)
-    prev_q = knife.rotation_quaternion.copy()
-    last = 1
-    hits = plan["hits"]
-
-    def key(f, loc, q):
-        knife.location = loc
-        knife.rotation_quaternion = q
-        knife.keyframe_insert("location", frame=f)
-        knife.keyframe_insert("rotation_quaternion", frame=f)
-
-    for i, h in enumerate(hits):
-        c0, c1 = h["contact_frame"], h["exit_frame"]
-        if c0 <= last:  # dense wave: several pieces in this frame, knife follows the first
-            continue
-        n, d = Vector(h["plane_normal"]), Vector(h["travel"])
-        q = blade_quat(n, d)
-        if q.dot(prev_q) < 0:
-            q.negate()
-        c = Vector(h["plane_point"]) + Vector(h["offset"])
-        ext = h["extent_travel"]
-        shift = -q.to_matrix().col[0] * 0.02
-        start = c - d * (ext + 0.004) + shift
-        end = c + d * (ext + 0.004) + shift
-        if d.z < -0.2:  # coming down: stop on the board surface (z = 0)
-            end = c + d * ((c.z - 0.0004) / -d.z) + shift
-        gap = c0 - last
-        if gap >= 4:
-            lead = min(6, gap - 2)
-            key(c0 - lead, start - d * 0.03, q)
-            key(c0, start, q)
-            key(c1, end, q)
-            last = c1
-        else:  # fast chopping: one key per frame, blade through the piece
-            key(c0, end, q)
-            last = c0
-        prev_q = q
-        nxt = hits[i + 1]["contact_frame"] if i + 1 < len(hits) else None
-        if (nxt is None or nxt - last > 8) and last == c1:
-            key(c1 + 4, end - d * 0.05, q)
-            last = c1 + 4
-    end_f = plan["total_frames"]
-    knife.location = park
-    knife.keyframe_insert("location", frame=max(last + 10, end_f - 20))
-    knife.keyframe_insert("rotation_quaternion", frame=max(last + 10, end_f - 20))
-
-
-def build_camera(plan, cfg):
-    cd = bpy.data.cameras.new("Camera")
-    cd.lens = 50
-    cd.clip_start = 0.004
-    cd.sensor_fit = "AUTO"
-    cam = bpy.data.objects.new("Camera", cd)
-    bpy.context.scene.collection.objects.link(cam)
-    bpy.context.scene.camera = cam
-    cam.rotation_mode = "QUATERNION"
-    w, h = cfg["resolution"]
-    vfov = 2 * math.atan(18 / 50)
-    hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
-    elev, azim = math.radians(42), math.radians(-78)
-    view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
-    interp("BEZIER")
-    shots = [{"frame": 1, "start_frame": 1, "center": [0, 0, 0.04], "radius": 0.075}] + plan["camera"]
-    if cfg["camera_style"] == "static":
-        shots = [max(shots, key=lambda s: s["radius"])] if len(shots) > 1 else shots
-        shots[0] = dict(shots[0], frame=1)
-    prev_q = None
-    last = 0
-    for s in shots:
-        r = max(0.06, s["radius"])
-        dist = r / math.tan(hfov / 2) * 1.05
-        target = Vector(s["center"]) + Vector((0, 0, -0.01))
-        loc = target + view * dist
-        q = (target - loc).to_track_quat("-Z", "Y")
-        if prev_q is not None and q.dot(prev_q) < 0:
-            q.negate()
-        # camera eases during the stroke's pre-roll, holds during cutting
-        f = max(last + 1, s.get("start_frame", s["frame"]) - 2)
-        cam.location, cam.rotation_quaternion = loc, q
-        cam.keyframe_insert("location", frame=f)
-        cam.keyframe_insert("rotation_quaternion", frame=f)
-        last, prev_q = f, q
-    return cam
 
 
 _FONT = []
@@ -967,8 +606,7 @@ def setup_render(scn, cfg, out_dir, final):
             pass
         # small studio scene: few bounces are enough, caustics never matter here
         c.max_bounces = 4
-        scn.render.use_motion_blur = cfg.get("format") == "levitate"
-        scn.render.motion_blur_shutter = 0.45
+        scn.render.use_motion_blur = False
         c.diffuse_bounces, c.glossy_bounces = 2, 2
         c.transmission_bounces, c.transparent_max_bounces = 2, 4
         c.caustics_reflective = c.caustics_refractive = False
@@ -1018,11 +656,8 @@ def main():
     if a["stage"] == "build":
         with open(a["plan"], encoding="utf-8") as f:
             plan = json.load(f)
-        if plan.get("kind") == "grid":
-            import blender_grid
-            report = blender_grid.build_grid_scene(plan, out_dir)
-        else:
-            report = build_scene(plan, out_dir)
+        import blender_grid
+        report = blender_grid.build_grid_scene(plan, out_dir)
         scn = bpy.context.scene
         scn["asmr_plan"] = os.path.abspath(a["plan"])
         # embed textures/HDRI: relative paths break when the run dir moves between CI jobs
@@ -1034,35 +669,14 @@ def main():
         os.makedirs(pv, exist_ok=True)
         t1 = time.time()
         small = [r // 2 for r in plan["config"]["preview_resolution"]]
-        if plan.get("kind") == "grid":
-            lv = plan["levels"]
-            mid = lv[min(3, len(lv) - 1)]
-            shots = {"01_opening": 2,
-                     "02_cut_in_progress": (mid["strokes_start"] + mid["strokes_end"]) // 2,
-                     "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
-                     "04_final": lv[-1]["collapse_end"] + 4}
-            if plan["config"]["format"] == "levitate":
-                if plan["config"].get("inspect_contacts"):
-                    seen = {}
-                    for bs in plan.get("blade_strokes", []):
-                        seen.setdefault(bs["axis"], bs)
-                    n = 10
-                    for bs in seen.values():
-                        c = bs["time"]["contact"]
-                        for f in (c - 1, c, c + 2):
-                            shots[f"{n}_contact"] = f
-                            n += 1
-                shots["06_falling"] = mid["collapse_start"] + (mid["collapse_end"] - mid["collapse_start"]) // 3
-            # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
-            sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
-        else:
-            hits, strokes = plan["hits"], plan["strokes"]
-            mid_hit = hits[min(len(hits) - 1, plan["strokes"][min(2, len(strokes) - 1)]["hits"][0])]
-            shots = {"01_opening": 2,
-                     "02_cut_in_progress": (mid_hit["contact_frame"] + mid_hit["exit_frame"]) // 2,
-                     "03_mid_progression": strokes[len(strokes) // 2]["end_frame"] - 1,
-                     "04_final": plan["total_frames"] - 5}
-            sheet = [(st["index"], st["end_frame"] - 1) for st in strokes]
+        lv = plan["levels"]
+        mid = lv[min(3, len(lv) - 1)]
+        shots = {"01_opening": 2,
+                 "02_cut_in_progress": (mid["strokes_start"] + mid["strokes_end"]) // 2,
+                 "03_mid_progression": lv[len(lv) // 2]["collapse_end"] + 2,
+                 "04_final": lv[-1]["collapse_end"] + 4}
+        # stills of huge levels cost ~8 min each (full BVH build): keep the sheet to the readable ones
+        sheet = [(l["level"], l["collapse_end"] + 2) for l in lv if l["cubes"] <= 150000]
         print(f"ASMR_LOG scene built in {report.get('build_seconds')}s, rendering previews", flush=True)
         for name, f in shots.items():
             t2 = time.time()
@@ -1076,8 +690,7 @@ def main():
         report["preview_frames"] = shots
         with open(os.path.join(out_dir, "blender_report.json"), "w", encoding="utf-8") as f:
             json.dump(report, f, indent=1)
-        print("ASMR_REPORT " + json.dumps({k: v for k, v in report.items()
-                                           if k not in ("hits", "counter_events")}))
+        print("ASMR_REPORT " + json.dumps(report))
     elif a["stage"] == "render":
         scn = bpy.context.scene
         plan_path = os.path.join(out_dir, "plan.json")  # run dirs move between CI jobs

@@ -14,8 +14,7 @@ from plan_grid import plan  # noqa: E402
 
 
 def make(**kw):
-    base = dict(format="levitate", object_type="cake", cuts_sequence=[1, 8], target_piece_count=2,
-                cutting_mode="levels", random_seed=1, video_duration=10, fps=24)
+    base = dict(object_type="cake", cuts_sequence=[1, 8], random_seed=1, video_duration=10, fps=24)
     base.update(kw)
     return plan(load_config(base))
 
@@ -33,7 +32,7 @@ def pose_at(p, f):
 def scene_pose(p, level):
     shape = OBJECTS[p["config"]["object_type"]]
     lo, hi = shape.bbox()
-    return KT.Pose(p["levels"][level]["yaw"], p["object_centre"], (hi[2] - lo[2]) / 2), shape
+    return KT.Pose(0.0, p["object_centre"], (hi[2] - lo[2]) / 2), shape
 
 
 def test_three_orientations_and_phase_order(p):
@@ -90,7 +89,12 @@ def test_edge_covers_section_and_exits(p):
         assert b["covered"], b["width"]
         pose, shape = scene_pose(p, b["level"])
         pos, m = pose_at(p, b["time"]["sep_end"])
-        assert not KT.inside_world(shape, pose, KT.edge_points(pos, m, p["knife_scale"])).any()
+        edge = KT.edge_points(pos, m, p["knife_scale"])
+        if b["s_end"] - b["s_out"] < 1e-6:
+            # downward cut on a board-resting object: the edge must reach the wood
+            assert edge[:, 2].min() < 0.0015, "the blade cuts all the way down to the board"
+        else:
+            assert not KT.inside_world(shape, pose, edge).any()
 
 
 def test_never_touches_board(p):
@@ -166,14 +170,8 @@ def test_audio_contacts_equal_blade_contacts(p, tmp_path):
     assert got == want or got == want2
 
 
-def test_reaction_is_small(p):
-    a = np.array(p["object_reaction"])
-    assert len(a) == p["total_frames"]
-    assert 0 < np.linalg.norm(a, axis=1).max() <= 0.0031
-
-
 def test_cut_rate_accelerates_and_counter_climbs_one_by_one():
-    q = make(format="grid", object_type="steak", cuts_sequence=[24, 400], video_duration=None, fps=30)
+    q = make(object_type="steak", cuts_sequence=[24, 400], video_duration=None, fps=30)
     for lvl in q["levels"]:
         blades = [b for b in q["blade_strokes"] if b["level"] == lvl["level"]]
         assert sum(b["group_cuts"] for b in blades) == lvl["cuts"], "every announced cut is made"

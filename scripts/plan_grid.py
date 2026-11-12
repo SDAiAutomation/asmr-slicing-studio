@@ -17,7 +17,7 @@ import time
 import numpy as np
 
 import knife_traj as KT
-from common import OBJECTS, MATERIALS, grid_occupancy, load_config, levitate_lift
+from common import OBJECTS, grid_occupancy, load_config
 
 
 def split_cuts(ext, C):
@@ -110,17 +110,13 @@ def _plan(cfg, ts=1.0):
 
     levels, strokes, cuts_ev, pieces_ev = [], [], [], []
     blade_strokes = []
-    levitate = cfg["format"] == "levitate"
-    span = float(max(ext[0], ext[1]))
-    lift = levitate_lift(cfg, shape) if levitate else 0.0
     height = float(ext[2])
-    centre = np.array([0.0, 0.0, lift + height / 2])
+    centre = np.array([0.0, 0.0, height / 2])
     radius = float(np.linalg.norm(ext)) / 2 * 1.15
     # the blade grows with the object so its edge always covers the whole section
     width_needed = float(np.hypot(ext[0], ext[1]))
     knife_scale = float(min(1.3, max(0.85, width_needed * 1.05 / (KT.EDGE_X[-1] - KT.EDGE_X[0]))))
     resistance = KT.RESISTANCE.get(cfg["object_type"], 0.5)
-    yaws = [-0.32, 0.42, -0.5, 0.24]
     safe_r = radius * 1.25 + 0.03
     prev_ready = None
     last_end = 0
@@ -144,8 +140,7 @@ def _plan(cfg, ts=1.0):
                 [(2, k) for k in range(cuts[2], 0, -1)]
         n_cuts = max(1, len(order))
         targets = cut_schedule(n_cuts, level_seconds(C) * ts * fps, FIRST_CUT_S * fps)
-        yaw = yaws[li % 4] if levitate else 0.0
-        pose = KT.Pose(yaw, centre, height / 2)
+        pose = KT.Pose(0.0, centre, height / 2)
         cut_frames = [f] * n_cuts
         cut_group = [0] * n_cuts
         lvl_blades = []
@@ -241,7 +236,7 @@ def _plan(cfg, ts=1.0):
                "strokes_start": f, "strokes_end": f + dur, "collapse_start": f_end,
                "collapse_end": f_end + collapse, "exit_start": f_end + collapse + hold,
                "end_frame": f_end + collapse + hold + exit_f,
-               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist(), "yaw": yaw}
+               "cell_size": (ext / n).tolist(), "lo": lo.tolist(), "ext": ext.tolist()}
         pieces_ev.append((f_end, cubes, li))
         levels.append(lvl)
         strokes.extend(lvl_strokes)
@@ -254,10 +249,9 @@ def _plan(cfg, ts=1.0):
         "version": 3, "kind": "grid", "config": cfg, "fps": fps,
         "total_frames": int(total), "duration_s": total / fps,
         "levels": levels, "strokes": strokes, "loop_in": int(loop_in),
-        "blade_strokes": blade_strokes, "knife_scale": knife_scale, "lift": lift,
+        "blade_strokes": blade_strokes, "knife_scale": knife_scale,
         "object_centre": centre.tolist(),
         "knife_track": KT.build_track(blade_strokes, int(total), centre, safe_r),
-        "object_reaction": KT.reaction_track(blade_strokes, int(total), resistance),
         "counters": {"cuts": cuts_ev, "pieces": pieces_ev},
         "stats": {"levels": len(levels), "blade_strokes": len(strokes),
                   "final_cubes": levels[-1]["cubes"] if levels else 0,

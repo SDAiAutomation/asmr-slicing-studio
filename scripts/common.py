@@ -4,31 +4,26 @@ Pure Python + numpy so it can be imported both by the planner (system Python)
 and by Blender's bundled Python. Never import bpy here.
 """
 import json
-import math
 import copy
 
 import numpy as np
 
 # --------------------------------------------------------------------------
-# Default configuration (short vertical ASMR video)
+# Default configuration. One format only: grid levels "N CUTS -> X CUBES".
 # --------------------------------------------------------------------------
 DEFAULTS = {
-    "object_type": "mango",
+    "object_type": "steak",            # steak | cake | mango | soap | jelly | chocolate
     "material_profile": None,          # None -> same as object_type
-    "target_piece_count": 15,
-    "progression_sequence": None,      # None -> auto (2,3,4,5,8,10,15,25,50,...)
-    "cutting_mode": "cumulative",      # "cumulative" (Mode A) | "levels" (Mode B)
-    "cutting_directions": ["vertical", "horizontal", "diagonal", "cross", "angled", "random3d"],
-    "cutting_speed": "auto",           # "auto" | "slow" | "medium" | "fast"
-    "camera_style": "follow",          # "follow" | "static"
     "audio_profile": None,             # None -> same as material_profile
-    "music": False,
-    "video_duration": None,            # seconds; None -> auto from piece count
+    "cuts_sequence": None,             # cuts per level (each level = a fresh object); None -> auto
+    "video_duration": None,            # seconds; pacing is scaled to fit (workflow sets 62)
     "resolution": [1080, 1920],
     "preview_resolution": [540, 960],
+    "export_resolution": None,         # [w, h]: upscale frames at export (lanczos); None -> as rendered
     "fps": 30,
     "render_engine": "eevee",          # "eevee" | "cycles"
     "cycles_samples": 64,
+    "preview_samples": 12,             # Cycles samples for non --final renders
     "output_path": "runs",
     "random_seed": 42,
     "watermark": "",                   # e.g. "@mychannel"; empty -> none
@@ -36,39 +31,32 @@ DEFAULTS = {
     "show_counter": True,
     "hook_text": "",                   # big question shown during the opening seconds
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
-    "format": "slices",                # "slices" (progressive halving) | "grid" (levels of grid cuts -> cubes)
-                                       # | "levitate" (grid levels cut in mid-air, pieces drop on the board)
-    "inspect_contacts": False,         # render extra stills around blade contacts (QA)
-    "levitate_height": None,           # levitate format: gap board -> object (m); None -> from object size
-    "preview_samples": 12,             # Cycles samples for non --final renders
-    "export_resolution": None,         # [w, h]: upscale frames at export (lanczos); None -> as rendered
-    "cuts_sequence": None,             # grid format: cuts per level; None -> auto
-    "max_cubes": 30000000,             # grid format: safety cap on the final level
-    "display_cubes_max": 1200000,      # grid format: cubes actually instanced per level (render budget)
+    "max_cubes": 30000000,             # safety cap on the final level
+    "display_cubes_max": 1200000,      # cubes actually instanced per level (render budget)
     "label_cuts": "CUTS",
-    "label_pieces": None,              # None -> "PIECES" (slices) / "CUBES" (grid)
-    "grid_resolution": None,           # None -> auto from target count
+    "label_pieces": "CUBES",
 }
 
 GRID_AUTO_CUTS = [4, 10, 15, 25, 40, 60, 100, 160, 250, 400, 600, 1000]
-AUTO_SEQUENCE = [2, 3, 4, 5, 8, 10, 15, 25, 50, 100, 200, 400, 1000, 2500, 5000, 10000, 25000, 50000]
 
-DIRECTION_NAMES = ["vertical", "horizontal", "diagonal", "cross", "angled", "random3d"]
-
-
-def levitate_lift(cfg, shape):
-    """Gap between the board and the bottom of a levitating object (metres)."""
-    lo, hi = shape.bbox()
-    span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
-    return float(cfg.get("levitate_height") or max(0.095, span * 0.55))
+# Keys of the removed formats (slices / levitate). Old daily configs may still send
+# them: they are ignored rather than rejected, except a non-grid "format".
+LEGACY_KEYS = {"format", "target_piece_count", "cutting_mode", "progression_sequence",
+               "cutting_directions", "cutting_speed", "camera_style", "music", "grid_resolution",
+               "levitate_height", "inspect_contacts"}
 
 
 def load_config(path_or_dict):
     if isinstance(path_or_dict, dict):
-        user = path_or_dict
+        user = dict(path_or_dict)
     else:
         with open(path_or_dict, "r", encoding="utf-8") as f:
             user = json.load(f)
+    fmt = user.get("format", "grid")
+    if fmt != "grid":
+        raise ValueError(f"format '{fmt}' was removed: only 'grid' exists now")
+    for k in LEGACY_KEYS:
+        user.pop(k, None)
     cfg = copy.deepcopy(DEFAULTS)
     unknown = [k for k in user if k not in DEFAULTS]
     if unknown:
@@ -78,44 +66,18 @@ def load_config(path_or_dict):
 
 
 def validate_config(cfg):
-    n = cfg["target_piece_count"]
-    if not isinstance(n, int) or n < 2:
-        raise ValueError("target_piece_count must be an integer >= 2")
-    if n > 50000:
-        raise ValueError("target_piece_count above 50000 is not supported (render time/memory)")
     if cfg["object_type"] not in OBJECTS:
         raise ValueError(f"object_type must be one of {list(OBJECTS)}")
     cfg["material_profile"] = cfg["material_profile"] or cfg["object_type"]
     cfg["audio_profile"] = cfg["audio_profile"] or cfg["material_profile"]
     if cfg["material_profile"] not in MATERIALS:
         raise ValueError(f"material_profile must be one of {list(MATERIALS)}")
-    if cfg["cutting_mode"] not in ("cumulative", "levels"):
-        raise ValueError("cutting_mode must be 'cumulative' or 'levels'")
-    for d in cfg["cutting_directions"]:
-        if d not in DIRECTION_NAMES:
-            raise ValueError(f"unknown cutting direction '{d}', use {DIRECTION_NAMES}")
-    seq = cfg["progression_sequence"]
-    if seq is None:
-        seq = [k for k in AUTO_SEQUENCE if k < n] + [n]
-    seq = [int(k) for k in seq]
-    if seq[-1] != n:
-        seq.append(n)
-    if any(b <= a for a, b in zip(seq, seq[1:])) or seq[0] < 2:
-        raise ValueError(f"progression_sequence must be strictly increasing and >= 2: {seq}")
-    cfg["progression_sequence"] = seq
-    if cfg["format"] not in ("slices", "grid", "levitate"):
-        raise ValueError("format must be 'slices', 'grid' or 'levitate'")
-    if cfg["label_pieces"] is None:
-        cfg["label_pieces"] = "CUBES" if cfg["format"] == "grid" else "PIECES"
-    if cfg["format"] in ("grid", "levitate"):
-        cs = cfg["cuts_sequence"] or GRID_AUTO_CUTS
-        cs = [int(c) for c in cs]
-        if any(c < 1 for c in cs):
-            raise ValueError("cuts_sequence values must be >= 1")
-        cfg["cuts_sequence"] = cs
-    if cfg["grid_resolution"] is None:
-        # ~60 voxels per final piece on average (inside volume ~ 0.23 * res^3)
-        cfg["grid_resolution"] = int(max(72, min(240, round((60 * n / 0.23) ** (1 / 3)))))
+    cs = [int(c) for c in (cfg["cuts_sequence"] or GRID_AUTO_CUTS)]
+    if not cs or any(c < 1 for c in cs):
+        raise ValueError("cuts_sequence values must be >= 1")
+    if max(cs) > 3000:
+        raise ValueError("cuts_sequence above 3000 cuts per level is not supported")
+    cfg["cuts_sequence"] = cs
     return cfg
 
 
@@ -305,32 +267,6 @@ MATERIALS = {
         "separation": 0.08, "pit_strategy": "none",
     },
 }
-
-
-def direction_vector(name, step_index, rng):
-    """Unit normal of a cutting plane for a named direction."""
-    ang = rng.uniform(-0.25, 0.25)  # natural hand variation
-    if name == "vertical":        # knife comes down, slices across the long axis
-        n = (0.0, 1.0, 0.0)
-        n = (math.sin(ang * 0.4), math.cos(ang * 0.4), 0.0)
-    elif name == "horizontal":    # flat slice parallel to the board
-        n = (0.0, 0.0, 1.0)
-    elif name == "cross":         # vertical, perpendicular to the previous slices
-        n = (math.cos(ang * 0.4), math.sin(ang * 0.4), 0.0)
-    elif name == "diagonal":
-        a = math.pi / 4 + ang
-        n = (math.cos(a), math.sin(a), 0.0)
-    elif name == "angled":        # tilted blade
-        a = rng.uniform(0, 2 * math.pi)
-        tilt = math.radians(rng.uniform(25, 50))
-        n = (math.cos(a) * math.cos(tilt), math.sin(a) * math.cos(tilt), math.sin(tilt))
-    elif name == "random3d":
-        v = rng.normal(size=3)
-        n = tuple(v)
-    else:
-        raise ValueError(name)
-    n = np.asarray(n, float)
-    return n / np.linalg.norm(n)
 
 
 def grid_occupancy(shape, lo, ext, n):
