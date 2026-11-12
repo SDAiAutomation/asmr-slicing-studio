@@ -10,17 +10,18 @@
 ## 2. Scène Blender (`blender_grid.py`)
 
 - Objet : mesh paramétrique (mangue) ou extrudé à contour irrégulier (steak, gâteau), matériaux procéduraux (persillé du steak continu à travers les cubes).
-- **Coutures** : shader piloté par le nombre de coupes faites par axe (paramètres animés), donc des milliers de coupes ne coûtent rien en géométrie.
-- **Cubes** : un point par cellule occupée, instancié en cube par Geometry Nodes ; effondrement (affaissement + étalement) animé par un paramètre `Collapse`. Au-delà de `display_cubes_max`, on garde toutes les cellules de surface et une part des cellules intérieures (invisibles).
+- **Coutures** : shader piloté par le nombre de coupes faites par axe (paramètres animés), donc des milliers de coupes ne coûtent rien en géométrie. Couleur par matière (`MATERIALS[...]["seam"]`, contrastée avec la surface : claire sur le glaçage noir du gâteau, sombre sur la mangue et le steak) ; demi-largeur `min(0,9 mm, 0,3 × cellule)` : ~2 px aux premiers niveaux, puis un voile qui balaie l'objet quand les cellules passent sous le pixel.
+- **Cubes** : un point par cellule occupée, instancié en cube par Geometry Nodes ; les cubes du bord sont réduits au morceau qu'ils contiennent vraiment (`common.grid_fit`, attribut `fit`), donc la pile ne déborde pas de la silhouette au moment du passage aux cubes ; effondrement (affaissement + étalement) animé par un paramètre `Collapse`. Au-delà de `display_cubes_max`, on garde toutes les cellules de surface et une part des cellules intérieures (invisibles).
 - Caméra fixe, planche signature identique dans toutes les vidéos, compteurs attachés à la caméra dans la zone sûre TikTok/Reels.
 
 ## 3. Audio (`make_audio.py`)
 
-Un « whoosh » + une coupe par passage de lame (aux frames de contact/sortie), une cascade de grains + un choc sourd à chaque effondrement. Procédural, normalisé à −1 dBFS.
+Un « whoosh » + une coupe par passage de lame (aux frames de contact/sortie), un tic court pour chaque coupe supplémentaire d'un passage rapide, une cascade de grains + un choc sourd à chaque effondrement. Procédural, normalisé à −1 dBFS.
 
 ## 4. Limites connues
 
-- Les cubes sont des cellules pleines : au bord d'un objet arrondi, ils dépassent légèrement de la forme au moment de l'effondrement.
+- Les cubes du bord sont des boîtes réduites (au tiers de cellule près), pas la forme exacte du morceau.
+- Au-delà d'environ 4 coupes par seconde, un passage de lame emporte plusieurs coupes : le compteur continue de monter une par une, avec un petit « tic » sonore par coupe.
 - Les coutures sont peintes (shader), pas de vraies entailles dans la géométrie.
 - Pas de simulation rigid-body : l'effondrement est une animation procédurale (stable, reproductible).
 - Au-delà de ~100 000 cubes, la pile finale devient une texture : c'est le compteur qui porte le « waouh ».
