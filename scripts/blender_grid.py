@@ -531,6 +531,23 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
 # ---------------------------------------------------------------------------
 # scene
 # ---------------------------------------------------------------------------
+def enable_knife_motion_blur(scn, knife):
+    """Motion blur on the knife only: the object, cubes and counters stay sharp, the blade
+    leaves the streak of every stroke made during the frame (several strokes per frame)."""
+    scn["knife_blur"] = True
+    scn.render.use_motion_blur = True
+    scn.render.motion_blur_shutter = 1.0
+    for ob in bpy.data.objects:
+        mine = ob == knife or ob.parent == knife
+        for target in (ob, getattr(ob, "cycles", None)):
+            if target is not None and hasattr(target, "use_motion_blur"):
+                target.use_motion_blur = mine
+        if mine:
+            for target in (ob, getattr(ob, "cycles", None)):
+                if target is not None and hasattr(target, "motion_steps"):
+                    target.motion_steps = 7          # 65 positions inside the shutter
+
+
 def build_grid_scene(plan, out_dir):
     t0 = time.time()
     cfg = plan["config"]
