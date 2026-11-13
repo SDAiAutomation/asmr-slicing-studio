@@ -21,9 +21,22 @@ EXIT_OVERTRAVEL = 0.006
 BOARD_MARGIN = 0.0004
 
 
+# Cleaver: tall rectangular blade, straight edge with a slight rocker at the front, so the
+# big flat face catches the light and reads clearly at any speed.
+SPINE_H = 0.068
+CORNER_R = 0.016
+
+
 def edge_y(x):
-    """Height of the cutting edge above y=0: flat at the heel, curved belly towards the tip."""
-    return 0.013 * (np.maximum(0.0, -np.asarray(x, float)) / 0.115) ** 2.2
+    """Height of the cutting edge above y=0: straight, with a slight rocker near the front."""
+    return 0.004 * (np.maximum(0.0, -np.asarray(x, float) - 0.05) / 0.062) ** 2
+
+
+def spine_y(x):
+    """Height of the spine: flat, with a rounded front-top corner."""
+    x = np.asarray(x, float)
+    dx = np.maximum(0.0, (-0.112 + CORNER_R) - x)
+    return SPINE_H - CORNER_R + np.sqrt(np.maximum(0.0, CORNER_R ** 2 - dx ** 2))
 
 
 def _unit(v):
@@ -104,7 +117,7 @@ def edge_points(pos, m, scale):
 
 def blade_outline(pos, m, scale):
     """Edge plus spine samples, used for clearance checks."""
-    spine = np.where(EDGE_X > -0.02, 0.048, 0.013 + 0.035 * np.clip((EDGE_X + 0.115) / 0.095, 0, 1) ** 0.75)
+    spine = spine_y(EDGE_X)
     return np.vstack((edge_points(pos, m, scale),
                       pos + np.outer(EDGE_X * scale, m[:, 0]) + np.outer(spine * scale, m[:, 1])))
 

@@ -378,7 +378,7 @@ def setup_environment(scn, board_size=BOARD_SIZE, brand=""):
     bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, -0.0221))
     floor = bpy.context.object
     floor.name = "Table"
-    floor.data.materials.append(simple_mat("Table", (0.016, 0.015, 0.019), 0.7))
+    floor.data.materials.append(simple_mat("Table", (0.034, 0.033, 0.038), 0.62))
     world = bpy.data.worlds.new("World")
     scn.world = world
     world.use_nodes = True
@@ -390,25 +390,27 @@ def setup_environment(scn, board_size=BOARD_SIZE, brand=""):
         env = nt.nodes.new("ShaderNodeTexEnvironment")
         env.image = bpy.data.images.load(hdr, check_existing=True)
         nt.links.new(env.outputs["Color"], bg.inputs["Color"])
-        bg.inputs["Strength"].default_value = 0.9
+        bg.inputs["Strength"].default_value = 1.3
         # the camera sees a dark studio, the objects receive the real HDRI light
         dark = nt.nodes.new("ShaderNodeBackground")
-        dark.inputs["Color"].default_value = (0.012, 0.012, 0.016, 1)
+        dark.inputs["Color"].default_value = (0.03, 0.031, 0.037, 1)
         lp = nt.nodes.new("ShaderNodeLightPath")
         mix = nt.nodes.new("ShaderNodeMixShader")
         nt.links.new(lp.outputs["Is Camera Ray"], mix.inputs["Fac"])
         nt.links.new(bg.outputs["Background"], mix.inputs[1])
         nt.links.new(dark.outputs["Background"], mix.inputs[2])
         nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
-        key_power, rim_power = 7, 9
+        key_power, rim_power = 16, 14
     else:
         bg.inputs[0].default_value = (0.012, 0.013, 0.016, 1)
         bg.inputs[1].default_value = 0.25
-        key_power, rim_power = 16, 12
+        key_power, rim_power = 30, 18
 
-    def area(name, loc, power, size, color=(1, 0.97, 0.92)):
+    def area(name, loc, power, size, color=(1, 0.97, 0.92), strip=None):
         ld = bpy.data.lights.new(name, "AREA")
         ld.energy, ld.size, ld.color = power, size, color
+        if strip:   # long thin softbox: draws a clean highlight line along the blade
+            ld.shape, ld.size, ld.size_y = "RECTANGLE", strip[0], strip[1]
         ob = bpy.data.objects.new(name, ld)
         scn.collection.objects.link(ob)
         ob.location = loc
@@ -418,37 +420,44 @@ def setup_environment(scn, board_size=BOARD_SIZE, brand=""):
 
     area("Key", (-0.45, -0.35, 0.55), key_power, 0.45)
     area("Rim", (0.10, 0.60, 0.45), rim_power, 0.35)
-    if not hdr:
-        area("Fill", (0.55, -0.45, 0.30), 3, 0.6, (0.85, 0.9, 1.0))
+    # big soft top light: clean, even, product-shot look on the object and the board
+    area("Top", (0.0, 0.0, 0.95), 26, 0.9)
+    area("Fill", (0.55, -0.45, 0.30), 6 if hdr else 8, 0.6, (0.9, 0.94, 1.0))
+    # two tall strip lights left and right: the flat of the blade catches a bright
+    # reflection whichever way it faces, so the knife always reads clearly
+    for nm, x in (("StripL", -0.55), ("StripR", 0.55)):
+        area(nm, (x, -0.15, 0.32), 14, 0.1, (1.0, 1.0, 1.0), strip=(0.09, 0.7))
     return board
 
 
 def build_knife():
-    """Chef's knife as ONE mesh (copies keep the handle): curved belly, ground bevel, bolster,
-    riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
+    """Cleaver as ONE mesh: tall rectangular polished blade (bright, reads at any speed), a
+    visible edge bevel, steel ferrule and a black handle. Edge along y~0, front at -x, heel
+    at +x, handle beyond the heel. Profile shared with knife_traj (edge_y / spine_y)."""
     import numpy as np
-    from knife_traj import edge_y
-    steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
-    set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
-    handle_m = simple_mat("Handle", (0.045, 0.024, 0.014), 0.38)
-    rivet_m = simple_mat("Rivet", (0.75, 0.62, 0.35), 0.25, 1.0)
+    from knife_traj import edge_y, spine_y
+    steel, _, bsdf = principled("Steel")
+    set_input(bsdf, "Base Color", (0.93, 0.93, 0.95, 1))
+    set_input(bsdf, "Metallic", 1.0)
+    set_input(bsdf, "Roughness", 0.09)
+    set_input(bsdf, "Anisotropic", 0.35)
+    bevel_m = simple_mat("EdgeBevel", (0.97, 0.97, 0.98), 0.05, 1.0)       # brighter mirror band
+    handle_m = simple_mat("Handle", (0.018, 0.018, 0.02), 0.32)
+    ferrule_m = simple_mat("Ferrule", (0.85, 0.86, 0.88), 0.18, 1.0)
     bm = bmesh.new()
-    xs = np.linspace(-0.115, 0.09, 42)
-
-    def spine_y(x):
-        return 0.048 if x > -0.02 else 0.013 + 0.035 * ((x + 0.115) / 0.095) ** 0.75
-
+    xs = np.linspace(-0.112, 0.092, 52)
     rows = []
     for x in xs:
-        e, s = float(edge_y(x)), spine_y(x)
-        grind = e + (s - e) * 0.42
-        t = 0.0011 * min(1.0, (x + 0.125) / 0.05)
+        e, sp = float(edge_y(x)), float(spine_y(x))
+        bev = e + 0.011                       # top of the ground edge bevel
+        t_sp, t_bev = 0.0019, 0.0011           # half-thickness at the spine / at the bevel line
         rows.append([bm.verts.new((x, e, 0.0)),
-                     bm.verts.new((x, grind, t * 0.75)), bm.verts.new((x, s, t)),
-                     bm.verts.new((x, s, -t)), bm.verts.new((x, grind, -t * 0.75))])
+                     bm.verts.new((x, bev, t_bev)), bm.verts.new((x, sp, t_sp)),
+                     bm.verts.new((x, sp, -t_sp)), bm.verts.new((x, bev, -t_bev))])
     for a, b in zip(rows, rows[1:]):
         for k in range(5):
-            bm.faces.new((a[k], b[k], b[(k + 1) % 5], a[(k + 1) % 5]))
+            f = bm.faces.new((a[k], b[k], b[(k + 1) % 5], a[(k + 1) % 5]))
+            f.material_index = 1 if k in (0, 4) else 0     # bevel faces: mirror band
     bm.faces.new(rows[0])
     bm.faces.new(list(reversed(rows[-1])))
 
@@ -457,25 +466,21 @@ def build_knife():
         vs = res["verts"]
         if bevel:
             es = list({e for v in vs for e in v.link_edges})
-            out = bmesh.ops.bevel(bm, geom=vs + es, offset=bevel, segments=3, profile=0.5, affect="EDGES")
+            out = bmesh.ops.bevel(bm, geom=vs + es, offset=bevel, segments=4, profile=0.5, affect="EDGES")
             faces = out["faces"] + list({f for v in vs if v.is_valid for f in v.link_faces})
         else:
             faces = list({f for v in vs for f in v.link_faces})
         for f in faces:
             f.material_index, f.smooth = mi, smooth
 
-    box((0.097, 0.024, 0.0), (0.014, 0.048, 0.0065), 0, 0.0012)
-    box((0.163, 0.026, 0.0), (0.118, 0.026, 0.017), 1, 0.0055, True)
-    for x in (0.128, 0.163, 0.198):
-        res = bmesh.ops.create_cone(bm, cap_ends=True, segments=16, radius1=0.0032, radius2=0.0032, depth=0.0178,
-                                    matrix=Matrix.Translation((x, 0.026, 0.0)))
-        for f in {f for v in res["verts"] for f in v.link_faces}:
-            f.material_index, f.smooth = 2, True
+    hy = 0.052                                                     # handle sits high, cleaver style
+    box((0.099, hy, 0.0), (0.014, 0.026, 0.02), 3, 0.004, True)     # ferrule
+    box((0.162, hy, 0.0), (0.114, 0.025, 0.021), 2, 0.008, True)   # handle
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     me = bpy.data.meshes.new("Knife")
     bm.to_mesh(me)
     bm.free()
-    for m in (steel, handle_m, rivet_m):
+    for m in (steel, bevel_m, handle_m, ferrule_m):
         me.materials.append(m)
     blade = bpy.data.objects.new("Knife", me)
     bpy.context.scene.collection.objects.link(blade)
@@ -634,6 +639,7 @@ def setup_render(scn, cfg, out_dir, final):
     try:
         scn.view_settings.view_transform = "AgX"
         scn.view_settings.look = "AgX - Medium High Contrast"
+        scn.view_settings.exposure = 0.25
     except TypeError:
         pass
 
