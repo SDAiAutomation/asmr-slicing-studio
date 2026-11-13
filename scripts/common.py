@@ -32,7 +32,7 @@ DEFAULTS = {
     "hook_text": "",                   # big question shown during the opening seconds
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
     "max_cubes": 30000000,             # safety cap on the final level
-    "display_cubes_max": 1200000,      # cubes actually instanced per level (render budget)
+    "display_cubes_max": 400000,       # cubes actually instanced (render budget: the cascade re-evaluates them every frame)
     "label_cuts": "CUTS",
     "label_pieces": "CUBES",
 }
