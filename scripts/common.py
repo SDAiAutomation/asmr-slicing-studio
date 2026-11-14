@@ -55,7 +55,7 @@ def load_config(path_or_dict):
             user = json.load(f)
     fmt = user.get("format", "grid")
     if fmt == "papaya_slices":
-        for key, value in {"object_type":"papaya", "audio_profile":"mango", "cuts_sequence":[50], "fps":24, "resolution":[540,960], "label_pieces":"SLICES"}.items():
+        for key, value in {"object_type":"papaya", "audio_profile":"mango", "cuts_sequence":[50], "fps":24, "preview_samples":24, "resolution":[540,960], "label_pieces":"SLICES"}.items():
             user.setdefault(key, value)
         cuts = user["cuts_sequence"]
         if (user["object_type"] != "papaya" or not isinstance(cuts,list) or len(cuts)!=1 or type(cuts[0]) is not int or not 1 <= cuts[0] <= 3000 or user["fps"] < 24):
