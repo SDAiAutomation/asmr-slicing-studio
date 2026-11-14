@@ -29,6 +29,7 @@ DEFAULTS = {
     "watermark": "",                   # e.g. "@mychannel"; empty -> none
     "board_watermark": "@sliceloop",   # handle burned into the cutting board (anti-repost); "" -> none
     "show_counter": True,
+    "progressive_dicing": False,
     "hook_text": "",                   # big question shown during the opening seconds
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
     "max_cubes": 30000000,             # safety cap on the final level
@@ -53,7 +54,13 @@ def load_config(path_or_dict):
         with open(path_or_dict, "r", encoding="utf-8") as f:
             user = json.load(f)
     fmt = user.get("format", "grid")
-    if fmt != "grid":
+    if fmt == "papaya_slices":
+        for key, value in {"object_type":"papaya", "audio_profile":"mango", "cuts_sequence":[50], "fps":24, "resolution":[540,960], "label_pieces":"SLICES"}.items():
+            user.setdefault(key, value)
+        cuts = user["cuts_sequence"]
+        if (user["object_type"] != "papaya" or not isinstance(cuts,list) or len(cuts)!=1 or type(cuts[0]) is not int or not 1 <= cuts[0] <= 3000 or user["fps"] < 24):
+            raise ValueError("papaya_slices needs papaya, one positive cut count up to 3000, and at least 24 fps")
+    elif fmt != "grid":
         raise ValueError(f"format '{fmt}' was removed: only 'grid' exists now")
     for k in LEGACY_KEYS:
         user.pop(k, None)
@@ -62,6 +69,9 @@ def load_config(path_or_dict):
     if unknown:
         raise ValueError(f"Unknown config keys: {unknown}")
     cfg.update(user)
+    if fmt == "papaya_slices":
+        cfg["format"] = fmt
+        return cfg
     return validate_config(cfg)
 
 
@@ -199,8 +209,22 @@ class Extruded:
         return lo, hi
 
 
+class Ribeye(Extruded):
+    def radius(self, th):
+        # Broad loin end and a narrower, slightly scalloped tail.
+        return super().radius(th) * (1 + 0.16 * np.cos(th - 0.55)
+                                     + 0.08 * np.cos(3 * th + 0.9)
+                                     + 0.025 * np.sin(7 * th))
+
+    def cap_width(self, theta):
+        return self.fat * (0.06 + 1.9 * np.maximum(0, np.sin(theta + 0.25)) ** 2)
+
+    def is_fat(self, x, y, z):
+        return self.rel(x, y) > 1 - 0.55 * self.cap_width(np.arctan2(y, x))
+
+
 # ribeye-like: ~21 x 14 cm, 2.5-3.2 cm thick, thin fat cap
-STEAK = Extruded(ax=0.105, ay=0.068, h=0.027, fat=0.06, wobble=0.12)
+STEAK = Ribeye(ax=0.105, ay=0.068, h=0.027, fat=0.11, wobble=0.21, edge=0.47)
 CAKE = Extruded(ax=0.085, ay=0.085, h=0.072, notch=0.0, fat=0.06, seed_phase=0.0, regular=True, edge=0.05)
 
 OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
@@ -290,3 +314,4 @@ def grid_occupancy(shape, lo, ext, n):
         occ[i] = hit.reshape(n[1], k, n[2], k).any(axis=(1, 3))
     centres = [lo[a] + (np.arange(n[a]) + 0.5) * cell[a] for a in range(3)]
     return occ, centres
+

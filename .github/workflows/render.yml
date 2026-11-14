@@ -68,6 +68,9 @@ jobs:
           raw = os.environ.get("CONFIG_JSON", "").strip()
           if raw:
               cfg = json.loads(raw)
+              if cfg.get("format") == "papaya_slices":
+                  cfg.setdefault("object_type", "papaya")
+                  cfg.setdefault("cuts_sequence", [50])
               quality = cfg.pop("quality", "${{ inputs.quality || 'preview' }}")
               # Daily videos get published: refuse a repeat of the last successful one.
               # Set "allow_repeat": true in config_json for a deliberate re-render.
@@ -102,9 +105,8 @@ jobs:
               cfg.setdefault("export_resolution", [1080, 1920])
           # TikTok only pays (Creator Rewards) for videos over 1 minute: aim for 62 s unless set
           cfg.setdefault("video_duration", 62)
-          # only one format exists now: drop keys of the removed slices / levitate formats
-          if cfg.pop("format", "grid") != "grid":
-              raise SystemExit("Only the grid format exists (slices and levitate were removed)")
+          if cfg.get("format", "grid") not in ("grid", "papaya_slices"):
+              raise SystemExit("Unsupported render format")
           for k in ("target_piece_count", "cutting_mode", "progression_sequence"):
               cfg.pop(k, None)
           cfg.update({"render_engine": "cycles", "output_path": "runs", "cycles_samples": 48})
@@ -241,7 +243,7 @@ jobs:
           printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
           REMOTE=$(rclone listremotes | head -1)
           # name = date_object_format_run ; tests stay apart from publishable videos
-          NAME="$(date -u +%Y-%m-%d)_${VIDEO_TAG}_grid_run${GITHUB_RUN_NUMBER}"
+          NAME="$(date -u +%Y-%m-%d)_${VIDEO_TAG}_$(python -c 'import json; print(json.load(open("work/ci_config.json")).get("format", "grid"))')_run${GITHUB_RUN_NUMBER}"
           DEST="A publier"
           if [ "$GITHUB_REF_NAME" != "main" ] || grep -qiw test work/caption.txt 2>/dev/null; then DEST="Tests"; fi
           rclone copyto work/*.mp4 "${REMOTE}${DEST}/${NAME}.mp4" --drive-root-folder-id "$DRIVE_FOLDER_ID"
@@ -274,7 +276,7 @@ jobs:
           row = {"date": datetime.datetime.utcnow().isoformat(timespec="minutes") + "Z",
                  "run": int(os.environ["GITHUB_RUN_ID"]), "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
                  "status": "ok" if exp.get("ok") else "failed",
-                 "format": "grid",
+                 "format": cfg.get("format", "grid"),
                  "sequence": cfg.get("cuts_sequence"),
                  "object": cfg.get("object_type"), "seed": cfg.get("random_seed"),
                  "hook": cfg.get("hook_text", ""), "end_text": cfg.get("end_text", ""), "caption": cap,

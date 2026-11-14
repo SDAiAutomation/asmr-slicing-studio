@@ -428,7 +428,7 @@ def build_knife():
     riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
     import numpy as np
     from knife_traj import edge_y
-    steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
+    steel = simple_mat("Steel", (0.60, 0.63, 0.67), 0.34, 1.0)
     set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
     handle_m = simple_mat("Handle", (0.045, 0.024, 0.014), 0.38)
     rivet_m = simple_mat("Rivet", (0.75, 0.62, 0.35), 0.25, 1.0)
@@ -555,7 +555,7 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
     if cfg["show_counter"]:
         _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.60, D, white)
         text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
-        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, ink)  # dark ink: this counter sits on the light board
+        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, white if cfg.get("progressive_dicing") else ink)  # dark ink: this counter sits on the light board
         text_obj("PiecesWord", cfg["label_pieces"], hh * 0.05, (0, -hh * 0.48, -D), cam, accent)
         # dark plate: the label sits on the dark table in wide shots but on the light board when
         # the camera pushes in, and must stay readable on both
@@ -599,7 +599,8 @@ def setup_render(scn, cfg, out_dir, final):
         c.samples = cfg["cycles_samples"] if final else cfg.get("preview_samples", 12)
         c.use_adaptive_sampling = True
         c.adaptive_threshold = 0.04 if final else 0.08
-        c.use_denoising = True
+        import _cycles
+        c.use_denoising = getattr(_cycles, "with_openimagedenoise", True)
         try:
             c.denoiser = "OPENIMAGEDENOISE"
         except TypeError:
@@ -710,3 +711,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
