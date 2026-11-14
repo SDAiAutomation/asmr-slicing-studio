@@ -555,7 +555,7 @@ def build_overlay(cam, cfg, cuts_events, pieces_events, total):
     if cfg["show_counter"]:
         _counter(cam, "Cuts", cuts_events, hh * 0.15, hh * 0.60, D, white)
         text_obj("CutsWord", cfg["label_cuts"], hh * 0.055, (0, hh * 0.47, -D), cam, accent)
-        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, ink)  # dark ink: this counter sits on the light board
+        _counter(cam, "Pieces", pieces_events, hh * 0.11, -hh * 0.36, D, white if cfg.get("progressive_dicing") else ink)  # dark ink: this counter sits on the light board
         text_obj("PiecesWord", cfg["label_pieces"], hh * 0.05, (0, -hh * 0.48, -D), cam, accent)
         # dark plate: the label sits on the dark table in wide shots but on the light board when
         # the camera pushes in, and must stay readable on both
@@ -710,3 +710,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
