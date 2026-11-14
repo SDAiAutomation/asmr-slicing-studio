@@ -598,6 +598,9 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
 # scene
 # ---------------------------------------------------------------------------
 def build_grid_scene(plan, out_dir):
+    if plan.get("kind") == "papaya_slices":
+        from papaya_scene import build
+        return build(plan)
     t0 = time.time()
     cfg = plan["config"]
     shape = OBJECTS[cfg["object_type"]]
