@@ -77,6 +77,18 @@ def build(plan):
     s.render.fps=plan["fps"]
     s.frame_end=plan["total_frames"]
     board=B.setup_environment(s,board_size=B.BOARD_SIZE,brand=cfg["board_watermark"])
+    # Directional shadows separate the fruit from the board at phone size.
+    key = s.objects["Key"]
+    key.data.energy, key.data.size = 6.5, 0.105
+    s.objects["Rim"].data.energy = 2.0
+    if s.objects.get("Fill"):
+        s.objects["Fill"].data.energy = 1.4
+    s.world.node_tree.nodes["Background"].inputs["Strength"].default_value *= 0.3
+    wood = board.data.materials[0].node_tree
+    grain = next(node for node in wood.nodes if node.type == "VALTORGB")
+    for stop, color in zip(grain.color_ramp.elements, [(0.23,0.12,0.045,1),(0.29,0.16,0.067,1),(0.25,0.13,0.05,1)]):
+        stop.color = color
+
     def rigid(ob,kind):
         bpy.ops.object.select_all(action="DESELECT")
         ob.select_set(True)
@@ -94,13 +106,21 @@ def build(plan):
           B.simple_mat("Seed cavity",(0.59,0.11,0.014),0.48)]
     nt=mats[0].node_tree
     noise=nt.nodes.new("ShaderNodeTexNoise")
-    noise.inputs["Scale"].default_value=44
+    noise.inputs["Scale"].default_value=24
     tex=nt.nodes.new("ShaderNodeTexCoord")
     tex.object=board
     nt.links.new(tex.outputs["Object"],noise.inputs["Vector"])
-    ramp=B.ramp(nt,[(0.25,(0.21,0.27,0.014)),(0.52,(0.81,0.40,0.019)),(0.78,(0.96,0.57,0.061))])
+    ramp=B.ramp(nt,[(0.25,(0.045,0.11,0.007)),(0.52,(0.38,0.25,0.012)),(0.78,(0.86,0.39,0.012))])
     nt.links.new(noise.outputs["Fac"],ramp.inputs[0])
     nt.links.new(ramp.outputs[0],nt.nodes["Principled BSDF"].inputs["Base Color"])
+    pores = nt.nodes.new("ShaderNodeTexNoise")
+    pores.inputs["Scale"].default_value = 930
+    nt.links.new(tex.outputs["Object"], pores.inputs["Vector"])
+    bump = nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Distance"].default_value = 0.00014
+    bump.inputs["Strength"].default_value = 0.15
+    nt.links.new(pores.outputs["Fac"], bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"], nt.nodes["Principled BSDF"].inputs["Normal"])
     seedmat=B.simple_mat("Papaya seeds",(0.015,0.009,0.006),0.29)
     bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2,radius=1)
     seed_mesh=bpy.context.object.data
@@ -166,9 +186,12 @@ def build(plan):
             knife.keyframe_insert("rotation_euler",frame=frame)
     B.set_visibility(knife,1,plan["impacts"][-1]["exit"]+2)
     camera=grid_camera(plan,(-HALF_LENGTH,-0.05,0),(HALF_LENGTH,0.05,2*CENTRE_HEIGHT),B.BOARD_SIZE)
-    camera.location=Vector((0.115,-0.39,0.27))
+    camera.location=Vector((0.24,-0.34,0.26))
     camera.rotation_quaternion=(Vector((0,0,0.038))-camera.location).to_track_quat("-Z","Y")
-    camera.data.lens=38
+    camera.data.lens=36
+    camera.data.keyframe_insert("lens", frame=fall-6)
+    camera.data.lens=27
+    camera.data.keyframe_insert("lens", frame=fall+14)
     cuts=[(1,0,n)]+[(e["contact"],i,n) for i,e in enumerate(plan["impacts"],1)]
     B.build_overlay(camera,cfg,cuts,[(1,1)]+[(e["contact"],2*i) for i,e in enumerate(plan["impacts"],1)],s.frame_end)
     s.frame_set(1)
