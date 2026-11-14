@@ -428,7 +428,7 @@ def build_knife():
     riveted handle. Edge along y~0, tip at -x, heel at +x, handle beyond the heel."""
     import numpy as np
     from knife_traj import edge_y
-    steel = simple_mat("Steel", (0.82, 0.83, 0.85), 0.16, 1.0)
+    steel = simple_mat("Steel", (0.60, 0.63, 0.67), 0.34, 1.0)
     set_input(steel.node_tree.nodes["Principled BSDF"], "Anisotropic", 0.55)
     handle_m = simple_mat("Handle", (0.045, 0.024, 0.014), 0.38)
     rivet_m = simple_mat("Rivet", (0.75, 0.62, 0.35), 0.25, 1.0)
