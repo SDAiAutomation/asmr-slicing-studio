@@ -394,7 +394,7 @@ def cube_mat(M, steak):
     return mat
 
 
-def collapse_group(mat):
+def collapse_group(mat, progressive=False):
     ng = bpy.data.node_groups.new("CubeCollapse", "GeometryNodeTree")
     I = ng.interface
     I.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
@@ -442,7 +442,17 @@ def collapse_group(mat):
     L.new(dz, vz.inputs[2])
     add = N.new("ShaderNodeVectorMath")
     add.operation = "ADD"
-    L.new(sc.outputs[0], add.inputs[0])
+    if progressive:
+        forward = N.new("ShaderNodeCombineXYZ")
+        drift = m("MULTIPLY", col, m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.9, 0.55)))
+        L.new(m("MULTIPLY", drift, -1.0), forward.inputs[1])
+        spill = N.new("ShaderNodeVectorMath")
+        spill.operation = "ADD"
+        L.new(sc.outputs[0], spill.inputs[0])
+        L.new(forward.outputs[0], spill.inputs[1])
+        L.new(spill.outputs[0], add.inputs[0])
+    else:
+        L.new(sc.outputs[0], add.inputs[0])
     L.new(vz.outputs[0], add.inputs[1])
     sp = N.new("GeometryNodeSetPosition")
     visible = N.new("GeometryNodeDeleteGeometry")
@@ -564,7 +574,7 @@ def build_grid_scene(plan, out_dir):
         me.materials.append(mt)
 
     cmat = cube_mat(M, steak)
-    ng, ids = collapse_group(cmat)
+    ng, ids = collapse_group(cmat, cfg.get("progressive_dicing", False))
     knife = B.build_knife()
     kmat = bpy.data.materials["Steel"]
     report = {"levels": [], "failures": []}
@@ -719,6 +729,8 @@ def grid_camera(plan, lo, hi, board_size):
     vfov = 2 * math.atan(18 / 50)
     hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
     half_w = board_size[0] / 2 / 0.92
+    if plan["config"].get("progressive_dicing"):
+        half_w = (hi[0] - lo[0]) / (2 * 0.61)
     elev, azim = math.radians(34), math.radians(-90)
     view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
     target = Vector((0, 0.01, 0.01))
