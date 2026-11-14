@@ -400,6 +400,7 @@ def collapse_group(mat):
     I.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
     I.new_socket(name="Collapse", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="CubeSize", in_out="INPUT", socket_type="NodeSocketVector")
+    I.new_socket(name="ReleaseZ", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="Height", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
     N, L = ng.nodes, ng.links
@@ -444,7 +445,11 @@ def collapse_group(mat):
     L.new(sc.outputs[0], add.inputs[0])
     L.new(vz.outputs[0], add.inputs[1])
     sp = N.new("GeometryNodeSetPosition")
-    L.new(gi.outputs["Geometry"], sp.inputs["Geometry"])
+    visible = N.new("GeometryNodeDeleteGeometry")
+    visible.domain = "POINT"
+    L.new(gi.outputs["Geometry"], visible.inputs["Geometry"])
+    L.new(m("LESS_THAN", sep.outputs["Z"], gi.outputs["ReleaseZ"]), visible.inputs["Selection"])
+    L.new(visible.outputs["Geometry"], sp.inputs["Geometry"])
     L.new(add.outputs[0], sp.inputs["Offset"])
     cube = N.new("GeometryNodeMeshCube")
     sz = N.new("ShaderNodeVectorMath")
@@ -601,7 +606,26 @@ def build_grid_scene(plan, out_dir):
 
         ob = bpy.data.objects.new(f"Level_{li:02d}", me)
         scn.collection.objects.link(ob)
+        horizontal = [st for st in plan["strokes"] if st["level"] == li and st["axis"] == 2]
+        progressive = cfg.get("progressive_dicing", False) and horizontal
         B.set_visibility(ob, start, lvl["collapse_start"])
+        if progressive:
+            # Keep only the uncut body below the active horizontal blade plane.
+            radius = 2 * max(lvl["ext"])
+            bpy.ops.mesh.primitive_cube_add(size=2 * radius)
+            cutter = bpy.context.object
+            cutter.name = f"ReleasePlane_{li:02d}"
+            cutter.hide_render = True
+            cutter.display_type = "WIRE"
+            modifier = ob.modifiers.new("Remaining body", "BOOLEAN")
+            modifier.operation = "DIFFERENCE"
+            modifier.object = cutter
+            B.interp("CONSTANT")
+            cutter.location.z = hi[2] + radius + cell[2]
+            cutter.keyframe_insert("location", frame=start)
+            for st in horizontal:
+                cutter.location.z = st["pos"] + radius
+                cutter.keyframe_insert("location", frame=st["frame"])
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
         ob.keyframe_insert("location", frame=start)
@@ -626,12 +650,22 @@ def build_grid_scene(plan, out_dir):
         cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
-        B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
+        release_start = horizontal[0]["frame"] if progressive else lvl["collapse_start"]
+        B.set_visibility(cob, release_start, lvl["end_frame"])
+        mod[ids["ReleaseZ"]] = float(lo[2] - cell[2])
+        if progressive:
+            B.interp("CONSTANT")
+            release_path = f'modifiers["GN"]["{ids["ReleaseZ"]}"]'
+            for st in horizontal:
+                mod[ids["ReleaseZ"]] = st["pos"]
+                cob.keyframe_insert(data_path=release_path, frame=st["frame"])
+            mod[ids["ReleaseZ"]] = float(lo[2] - cell[2])
+            cob.keyframe_insert(data_path=release_path, frame=lvl["collapse_start"])
         cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
         B.interp("BEZIER")
         mod[ids["Collapse"]] = 0.0
-        cob.keyframe_insert(data_path=path, frame=lvl["collapse_start"])
+        cob.keyframe_insert(data_path=path, frame=release_start)
         mod[ids["Collapse"]] = 1.0
         cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
         cob.location = (0, 0, 0)
