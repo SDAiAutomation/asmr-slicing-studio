@@ -29,6 +29,7 @@ DEFAULTS = {
     "watermark": "",                   # e.g. "@mychannel"; empty -> none
     "board_watermark": "@sliceloop",   # handle burned into the cutting board (anti-repost); "" -> none
     "show_counter": True,
+    "progressive_dicing": False,
     "hook_text": "",                   # big question shown during the opening seconds
     "end_text": "",                    # call to action shown at the end (e.g. a comment prompt)
     "max_cubes": 30000000,             # safety cap on the final level
