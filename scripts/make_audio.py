@@ -196,6 +196,11 @@ def grid_events(plan, buf, P, rng, samples, events, t_of):
     for lvl in plan["levels"]:
         t0, t1 = t_of(lvl["collapse_start"]), t_of(lvl["collapse_end"])
         n = int(SR * (t1 - t0 + 0.4))
+        if plan.get("kind") == "papaya_slices":
+            landing = tone(rng, P["land"]["f0"], P["land"]["decay"])
+            place(buf, t0 + 0.12, landing, 0.0, P["land"]["gain"])
+            events.append({"t":t0+0.12, "type":"surface_contact", "level":lvl["level"]})
+            continue
         dens = 60 + 90 * np.log10(max(10, lvl["cubes"]))      # grains per second
         y = np.zeros(n)
         for pos in rng.integers(0, max(1, int(SR * (t1 - t0))), size=int(dens * (t1 - t0))):
@@ -272,3 +277,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
