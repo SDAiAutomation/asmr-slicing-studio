@@ -200,8 +200,22 @@ class Extruded:
         return lo, hi
 
 
+class Ribeye(Extruded):
+    def radius(self, th):
+        # Broad loin end and a narrower, slightly scalloped tail.
+        return super().radius(th) * (1 + 0.16 * np.cos(th - 0.55)
+                                     + 0.08 * np.cos(3 * th + 0.9)
+                                     + 0.025 * np.sin(7 * th))
+
+    def cap_width(self, theta):
+        return self.fat * (0.06 + 1.9 * np.maximum(0, np.sin(theta + 0.25)) ** 2)
+
+    def is_fat(self, x, y, z):
+        return self.rel(x, y) > 1 - 0.55 * self.cap_width(np.arctan2(y, x))
+
+
 # ribeye-like: ~21 x 14 cm, 2.5-3.2 cm thick, thin fat cap
-STEAK = Extruded(ax=0.105, ay=0.068, h=0.027, fat=0.06, wobble=0.12)
+STEAK = Ribeye(ax=0.105, ay=0.068, h=0.027, fat=0.11, wobble=0.21, edge=0.47)
 CAKE = Extruded(ax=0.085, ay=0.085, h=0.072, notch=0.0, fat=0.06, seed_phase=0.0, regular=True, edge=0.05)
 
 OBJECTS = {"mango": MANGO, "soap": SOAP, "jelly": JELLY, "chocolate": SOAP,
@@ -291,3 +305,4 @@ def grid_occupancy(shape, lo, ext, n):
         occ[i] = hit.reshape(n[1], k, n[2], k).any(axis=(1, 3))
     centres = [lo[a] + (np.arange(n[a]) + 0.5) * cell[a] for a in range(3)]
     return occ, centres
+
