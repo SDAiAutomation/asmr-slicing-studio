@@ -269,6 +269,9 @@ def _plan(cfg, ts=1.0):
 
 def plan(cfg):
     """Fits the configured video_duration (seconds) when given, by scaling the pacing."""
+    if cfg.get("format") == "papaya_slices":
+        from papaya_plan import plan as papaya_plan
+        return papaya_plan(cfg)
     p = _plan(cfg)
     target = cfg.get("video_duration")
     if target:
