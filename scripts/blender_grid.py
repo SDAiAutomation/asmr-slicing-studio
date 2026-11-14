@@ -558,7 +558,22 @@ def build_grid_scene(plan, out_dir):
     scn.frame_start, scn.frame_end = 1, plan["total_frames"]
     lo, hi = shape.bbox()
     board_size = B.BOARD_SIZE
-    B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
+    board = B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
+    if cfg.get("progressive_dicing"):
+        # Side lighting separates cut faces; darker timber keeps the blade readable.
+        key = scn.objects["Key"]
+        key.location = (-0.36, -0.17, 0.34)
+        key.rotation_euler = (Vector((0, 0, 0.025)) - key.location).to_track_quat("-Z", "Y").to_euler()
+        key.data.energy, key.data.size = 6.5, 0.19
+        scn.objects["Rim"].data.energy = 4.5
+        if scn.objects.get("Fill"):
+            scn.objects["Fill"].data.energy = 0.9
+        scn.world.node_tree.nodes["Background"].inputs["Strength"].default_value *= 0.35
+        timber = board.data.materials[0].node_tree
+        ramp = next(n for n in timber.nodes if n.type == "VALTORGB")
+        ramp.color_ramp.elements[0].color = (0.13, 0.062, 0.024, 1)
+        ramp.color_ramp.elements[1].color = (0.24, 0.13, 0.058, 1)
+        ramp.color_ramp.elements[-1].color = (0.31, 0.17, 0.077, 1)
 
     steak = getattr(shape, "kind", "") == "extruded"
     if steak:
@@ -740,3 +755,4 @@ def grid_camera(plan, lo, hi, board_size):
     cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
     # no depth of field: the counters are camera-attached and must stay sharp
     return cam
+
