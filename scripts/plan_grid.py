@@ -158,9 +158,12 @@ def _plan(cfg, ts=1.0):
         # every cut that is due before it leaves the object (the counter still climbs 1 by 1).
         cursor, j, gi = f, 0, 0
         passes = []
+        single_pass = cfg.get("progressive_dicing", False)
         while j < n_cuts:
             st = stroke_for(j)
             if st is None:   # plane grazing the outline: the cut lands without its own pass
+                if single_pass:
+                    raise ValueError(f"Cannot animate cut {j + 1} at level {li + 1}")
                 cut_frames[j] = int(round(max(cursor, f + targets[j])))
                 cut_group[j] = gi
                 cursor = cut_frames[j]
@@ -170,12 +173,14 @@ def _plan(cfg, ts=1.0):
             fly = KT.transit_frames(prev_ready[0], prev_ready[1], p1, q1, centre, safe_r) if prev_ready else 0
             ready = max(cursor, last_end + fly)   # the blade flies in during the transition
             end = max(ready + KT.fast_frames(st), int(round(f + targets[j])) + 3)
+            if single_pass:
+                end = max(end, ready + KT.body_frames(st), ready + round(0.46 * fps))
             if end - ready >= KT.body_frames(st):
                 tm = KT.timing(ready, end, resistance, KT.retract_frames(st))
             else:
                 tm = KT.quick_timing(ready, end, st)
             k = j + 1
-            while k < n_cuts and f + targets[k] <= end and order[k][0] == order[j][0]:
+            while not single_pass and k < n_cuts and f + targets[k] <= end and order[k][0] == order[j][0]:
                 k += 1
             g = list(range(j, k))
             st.update(level=li, axis=int(order[j][0]), group_cuts=len(g),
@@ -191,6 +196,9 @@ def _plan(cfg, ts=1.0):
         # until the next pass touches the object, so the count never jumps by a block.
         for i, (g, tm) in enumerate(passes):
             c0, x0 = tm["contact"], tm["exit"]
+            if single_pass:
+                cut_frames[g[0]] = c0
+                continue
             if len(g) <= x0 - c0 + 1:
                 span_end = x0
             else:
@@ -253,7 +261,7 @@ def _plan(cfg, ts=1.0):
         "object_centre": centre.tolist(),
         "knife_track": KT.build_track(blade_strokes, int(total), centre, safe_r),
         "counters": {"cuts": cuts_ev, "pieces": pieces_ev},
-        "stats": {"levels": len(levels), "blade_strokes": len(strokes),
+        "stats": {"levels": len(levels), "blade_strokes": len(blade_strokes),
                   "final_cubes": levels[-1]["cubes"] if levels else 0,
                   "plan_seconds": round(time.time() - t0, 2)},
     }
@@ -287,3 +295,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
