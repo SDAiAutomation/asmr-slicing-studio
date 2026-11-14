@@ -696,12 +696,20 @@ def build_grid_scene(plan, out_dir):
             modifier = ob.modifiers.new("Remaining body", "BOOLEAN")
             modifier.operation = "DIFFERENCE"
             modifier.object = cutter
+            # New Boolean faces inherit the flesh slot from the cutting solid.
+            for material in me.materials:
+                cutter.data.materials.append(material)
+            for polygon in cutter.data.polygons:
+                polygon.material_index = 1
             B.interp("CONSTANT")
             cutter.location.z = hi[2] + radius + cell[2]
             cutter.keyframe_insert("location", frame=start)
             for st in horizontal:
                 cutter.location.z = st["pos"] + radius
                 cutter.keyframe_insert("location", frame=st["frame"])
+            for curve in cutter.animation_data.action.fcurves:
+                for point in curve.keyframe_points:
+                    point.interpolation = "CONSTANT"
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
         ob.keyframe_insert("location", frame=start)
