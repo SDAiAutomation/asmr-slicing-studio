@@ -599,7 +599,8 @@ def setup_render(scn, cfg, out_dir, final):
         c.samples = cfg["cycles_samples"] if final else cfg.get("preview_samples", 12)
         c.use_adaptive_sampling = True
         c.adaptive_threshold = 0.04 if final else 0.08
-        c.use_denoising = True
+        import _cycles
+        c.use_denoising = getattr(_cycles, "with_openimagedenoise", True)
         try:
             c.denoiser = "OPENIMAGEDENOISE"
         except TypeError:
