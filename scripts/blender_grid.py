@@ -33,6 +33,8 @@ def extruded_mesh(shape, rings=16, n=200):
     has_top = hasattr(shape, "top")
     # ring 0 -> ring 1 is the fat cap (exact width), then the muscle rings inwards
     inner = 1.0 - shape.fat
+    if hasattr(shape, "cap_width"):
+        inner = (1 - shape.cap_width(np.arctan2(out[:, 1], out[:, 0])))[:, None]
     scales = [1.0, inner] + [inner * (1.0 - k / (rings - 1)) for k in range(1, rings - 1)]
     ring_v = []
     for sc in scales:
@@ -115,10 +117,10 @@ def meat_group(M):
     mout = [x for x in mul.outputs if x.enabled and x.type == "RGBA"][0]
     # marbling: thin, branching fat veins from a distorted 3D noise iso-band
     mn = N.new("ShaderNodeTexNoise")
-    mn.inputs["Scale"].default_value = 16.0
-    mn.inputs["Detail"].default_value = 8.0
+    mn.inputs["Scale"].default_value = 21.0
+    mn.inputs["Detail"].default_value = 3.0
     mn.inputs["Roughness"].default_value = 0.62
-    mn.inputs["Distortion"].default_value = 0.8
+    mn.inputs["Distortion"].default_value = 0.38
     L.new(gi.outputs["Vector"], mn.inputs["Vector"])
     # vein = thin iso-band where the noise crosses 0.5
     sub = N.new("ShaderNodeMath")
@@ -134,7 +136,7 @@ def meat_group(M):
     L.new(gi.outputs["Vector"], mask.inputs["Vector"])
     mk = B.ramp(g, [(0.30, (0.15, 0.15, 0.15)), (0.60, (1, 1, 1))])
     L.new(mask.outputs["Fac"], mk.inputs["Fac"])
-    vr = B.ramp(g, [(0.0, (1, 1, 1)), (0.008, (1, 1, 1)), (0.022, (0, 0, 0))])
+    vr = B.ramp(g, [(0.0, (1, 1, 1)), (0.008, (1, 1, 1)), (0.016, (0, 0, 0))])
     L.new(band.outputs[0], vr.inputs["Fac"])
     vm = N.new("ShaderNodeMath")
     vm.operation = "MULTIPLY"
@@ -152,7 +154,7 @@ def meat_group(M):
     rg = N.new("ShaderNodeMath")
     rg.operation = "MULTIPLY_ADD"
     rg.inputs[1].default_value = 0.15
-    rg.inputs[2].default_value = 0.52
+    rg.inputs[2].default_value = 0.34
     L.new(vm.outputs[0], rg.inputs[0])
     L.new(rg.outputs[0], go.inputs["Roughness"])
     hh = N.new("ShaderNodeMath")
@@ -163,12 +165,61 @@ def meat_group(M):
     return g
 
 
+def ribeye_surface(nt, coord):
+    """Bake a planar muscle cross-section shared by the intact meat and diced faces."""
+    image = bpy.data.images.get("Ribeye section")
+    if image is None:
+        n = 1024
+        rng = np.random.default_rng(318)
+        y, x = np.mgrid[-1:1:complex(n), -1:1:complex(n)].astype(np.float32)
+
+        def noise(cells):
+            grid = rng.uniform(-1, 1, (cells + 1, cells + 1))
+            u = np.linspace(0, cells - 0.001, n)
+            ix = u.astype(int)
+            t = u - ix
+            t = t * t * (3 - 2 * t)
+            rows = grid[:, ix] * (1 - t) + grid[:, ix + 1] * t
+            return rows[ix] * (1 - t[:, None]) + rows[ix + 1] * t[:, None]
+
+        warp = 0.045 * noise(8) + 0.012 * noise(32)
+        # Curved seam separating the ribeye cap from the central eye.
+        seam = y - (0.26 - 0.63 * (x + 0.14) ** 2 + 0.11 * np.sin(4 * x)) + warp
+        cap = seam > 0
+        direction = np.where(cap, y + 0.48 * x ** 2, 0.65 * x + 0.77 * y + 0.17 * x ** 2)
+        grain = direction + 0.055 * noise(8) + 0.014 * noise(27)
+        fibres = np.sin(825 * grain) * 0.035 + np.sin(203 * grain) * 0.055
+        grain_noise = noise(80)
+        tone = 1 + 0.40 * noise(7) + 0.17 * noise(32) + 0.11 * grain_noise + fibres
+        flesh = tone[..., None] * np.array([0.32, 0.020, 0.028])
+        flesh[cap] *= [0.82, 0.92, 1.0]
+        vein_field = np.sin(24 * direction + 5 * noise(5) + 1.3 * noise(16))
+        flecks = np.clip((0.16 - abs(vein_field)) * 6, 0, 1) * np.clip(2.3 * noise(17), 0, 1)
+        main = np.clip((0.020 + 0.013 * noise(12) - abs(seam)) * 165, 0, 1)
+        fat = np.maximum(main, flecks * 0.85)[..., None]
+        rgba = np.ones((n, n, 4), np.float32)
+        rgba[:, :, :3] = flesh * (1 - fat) + fat * np.array([0.76, 0.56, 0.39])
+        image = bpy.data.images.new("Ribeye section", width=n, height=n, float_buffer=True)
+        image.colorspace_settings.name = "Non-Color"
+        image.pixels.foreach_set(rgba.ravel())
+        image.pack()
+    mapping = nt.nodes.new("ShaderNodeVectorMath")
+    mapping.operation = "MULTIPLY_ADD"
+    mapping.inputs[1].default_value = (3.8, 5.9, 1)
+    mapping.inputs[2].default_value = (0.44, 0.50, 0)
+    nt.links.new(coord, mapping.inputs[0])
+    texture = nt.nodes.new("ShaderNodeTexImage")
+    texture.image = image
+    nt.links.new(mapping.outputs[0], texture.inputs["Vector"])
+    return texture.outputs["Color"]
+
+
 def _wire_meat(mat, nt, bsdf, M, coord_socket):
     L = nt.links
     grp = nt.nodes.new("ShaderNodeGroup")
     grp.node_tree = meat_group(M)
     L.new(coord_socket, grp.inputs["Vector"])
-    L.new(grp.outputs["Color"], bsdf.inputs["Base Color"])
+    L.new(ribeye_surface(nt, coord_socket), bsdf.inputs["Base Color"])
     L.new(grp.outputs["Roughness"], bsdf.inputs["Roughness"])
     bump = nt.nodes.new("ShaderNodeBump")
     B.set_input(bump, "Strength", 0.12)
@@ -394,12 +445,13 @@ def cube_mat(M, steak):
     return mat
 
 
-def collapse_group(mat):
+def collapse_group(mat, progressive=False):
     ng = bpy.data.node_groups.new("CubeCollapse", "GeometryNodeTree")
     I = ng.interface
     I.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
     I.new_socket(name="Collapse", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="CubeSize", in_out="INPUT", socket_type="NodeSocketVector")
+    I.new_socket(name="ReleaseZ", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="Height", in_out="INPUT", socket_type="NodeSocketFloat")
     I.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
     N, L = ng.nodes, ng.links
@@ -441,10 +493,24 @@ def collapse_group(mat):
     L.new(dz, vz.inputs[2])
     add = N.new("ShaderNodeVectorMath")
     add.operation = "ADD"
-    L.new(sc.outputs[0], add.inputs[0])
+    if progressive:
+        forward = N.new("ShaderNodeCombineXYZ")
+        drift = m("MULTIPLY", col, m("MULTIPLY", sep.outputs["Z"], m("MULTIPLY_ADD", rv, 0.9, 0.55)))
+        L.new(m("MULTIPLY", drift, -1.0), forward.inputs[1])
+        spill = N.new("ShaderNodeVectorMath")
+        spill.operation = "ADD"
+        L.new(sc.outputs[0], spill.inputs[0])
+        L.new(forward.outputs[0], spill.inputs[1])
+        L.new(spill.outputs[0], add.inputs[0])
+    else:
+        L.new(sc.outputs[0], add.inputs[0])
     L.new(vz.outputs[0], add.inputs[1])
     sp = N.new("GeometryNodeSetPosition")
-    L.new(gi.outputs["Geometry"], sp.inputs["Geometry"])
+    visible = N.new("GeometryNodeDeleteGeometry")
+    visible.domain = "POINT"
+    L.new(gi.outputs["Geometry"], visible.inputs["Geometry"])
+    L.new(m("LESS_THAN", sep.outputs["Z"], gi.outputs["ReleaseZ"]), visible.inputs["Selection"])
+    L.new(visible.outputs["Geometry"], sp.inputs["Geometry"])
     L.new(add.outputs[0], sp.inputs["Offset"])
     cube = N.new("GeometryNodeMeshCube")
     sz = N.new("ShaderNodeVectorMath")
@@ -532,6 +598,9 @@ def cubes_object(name, co, kinds, ng, ids, size, height, mat):
 # scene
 # ---------------------------------------------------------------------------
 def build_grid_scene(plan, out_dir):
+    if plan.get("kind") == "papaya_slices":
+        from papaya_scene import build
+        return build(plan)
     t0 = time.time()
     cfg = plan["config"]
     shape = OBJECTS[cfg["object_type"]]
@@ -543,7 +612,22 @@ def build_grid_scene(plan, out_dir):
     scn.frame_start, scn.frame_end = 1, plan["total_frames"]
     lo, hi = shape.bbox()
     board_size = B.BOARD_SIZE
-    B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
+    board = B.setup_environment(scn, board_size=board_size, brand=cfg.get("board_watermark", ""))
+    if cfg.get("progressive_dicing"):
+        # Side lighting separates cut faces; darker timber keeps the blade readable.
+        key = scn.objects["Key"]
+        key.location = (-0.24, 0.09, 0.37)
+        key.rotation_euler = (Vector((0, 0, 0.025)) - key.location).to_track_quat("-Z", "Y").to_euler()
+        key.data.energy, key.data.size = 4.4, 0.37
+        scn.objects["Rim"].data.energy = 1.4
+        if scn.objects.get("Fill"):
+            scn.objects["Fill"].data.energy = 2.1
+        scn.world.node_tree.nodes["Background"].inputs["Strength"].default_value *= 0.35
+        timber = board.data.materials[0].node_tree
+        ramp = next(n for n in timber.nodes if n.type == "VALTORGB")
+        ramp.color_ramp.elements[0].color = (0.10, 0.052, 0.027, 1)
+        ramp.color_ramp.elements[1].color = (0.13, 0.071, 0.037, 1)
+        ramp.color_ramp.elements[-1].color = (0.16, 0.088, 0.046, 1)
 
     steak = getattr(shape, "kind", "") == "extruded"
     if steak:
@@ -559,7 +643,7 @@ def build_grid_scene(plan, out_dir):
         me.materials.append(mt)
 
     cmat = cube_mat(M, steak)
-    ng, ids = collapse_group(cmat)
+    ng, ids = collapse_group(cmat, cfg.get("progressive_dicing", False))
     knife = B.build_knife()
     kmat = bpy.data.materials["Steel"]
     report = {"levels": [], "failures": []}
@@ -601,7 +685,34 @@ def build_grid_scene(plan, out_dir):
 
         ob = bpy.data.objects.new(f"Level_{li:02d}", me)
         scn.collection.objects.link(ob)
+        horizontal = [st for st in plan["strokes"] if st["level"] == li and st["axis"] == 2]
+        progressive = cfg.get("progressive_dicing", False) and horizontal
         B.set_visibility(ob, start, lvl["collapse_start"])
+        if progressive:
+            # Keep only the uncut body below the active horizontal blade plane.
+            radius = 2 * max(lvl["ext"])
+            bpy.ops.mesh.primitive_cube_add(size=2 * radius)
+            cutter = bpy.context.object
+            cutter.name = f"ReleasePlane_{li:02d}"
+            cutter.hide_render = True
+            cutter.display_type = "WIRE"
+            modifier = ob.modifiers.new("Remaining body", "BOOLEAN")
+            modifier.operation = "DIFFERENCE"
+            modifier.object = cutter
+            # New Boolean faces inherit the flesh slot from the cutting solid.
+            for material in me.materials:
+                cutter.data.materials.append(material)
+            for polygon in cutter.data.polygons:
+                polygon.material_index = 1
+            B.interp("CONSTANT")
+            cutter.location.z = hi[2] + radius + cell[2]
+            cutter.keyframe_insert("location", frame=start)
+            for st in horizontal:
+                cutter.location.z = st["pos"] + radius
+                cutter.keyframe_insert("location", frame=st["frame"])
+            for curve in cutter.animation_data.action.fcurves:
+                for point in curve.keyframe_points:
+                    point.interpolation = "CONSTANT"
         B.interp("BEZIER")
         ob.location = (0.45, 0, 0) if li else (0, 0, 0)
         ob.keyframe_insert("location", frame=start)
@@ -626,12 +737,22 @@ def build_grid_scene(plan, out_dir):
         cob, mod = cubes_object(f"Cubes_{li:02d}", co, kinds, ng, ids, cell, height, cmat)
         print(f"ASMR_LOG level {li}: cuts={lvl['cuts']} cubes={built} displayed={len(co)} "
               f"in {time.time() - t_l:.1f}s", flush=True)
-        B.set_visibility(cob, lvl["collapse_start"], lvl["end_frame"])
+        release_start = horizontal[0]["frame"] if progressive else lvl["collapse_start"]
+        B.set_visibility(cob, release_start, lvl["end_frame"])
+        mod[ids["ReleaseZ"]] = float(lo[2] - cell[2])
+        if progressive:
+            B.interp("CONSTANT")
+            release_path = f'modifiers["GN"]["{ids["ReleaseZ"]}"]'
+            for st in horizontal:
+                mod[ids["ReleaseZ"]] = st["pos"]
+                cob.keyframe_insert(data_path=release_path, frame=st["frame"])
+            mod[ids["ReleaseZ"]] = float(lo[2] - cell[2])
+            cob.keyframe_insert(data_path=release_path, frame=lvl["collapse_start"])
         cob.cycles.use_motion_blur = False  # millions of instances: blur would explode render time
         path = f'modifiers["GN"]["{ids["Collapse"]}"]'
         B.interp("BEZIER")
         mod[ids["Collapse"]] = 0.0
-        cob.keyframe_insert(data_path=path, frame=lvl["collapse_start"])
+        cob.keyframe_insert(data_path=path, frame=release_start)
         mod[ids["Collapse"]] = 1.0
         cob.keyframe_insert(data_path=path, frame=lvl["collapse_end"])
         cob.location = (0, 0, 0)
@@ -685,7 +806,9 @@ def grid_camera(plan, lo, hi, board_size):
     vfov = 2 * math.atan(18 / 50)
     hfov = 2 * math.atan(math.tan(vfov / 2) * w / h)
     half_w = board_size[0] / 2 / 0.92
-    elev, azim = math.radians(34), math.radians(-90)
+    if plan["config"].get("progressive_dicing"):
+        half_w = (hi[0] - lo[0]) / (2 * 0.72)
+    elev, azim = math.radians(43 if plan["config"].get("progressive_dicing") else 34), math.radians(-90)
     view = Vector((math.cos(elev) * math.cos(azim), math.cos(elev) * math.sin(azim), math.sin(elev)))
     target = Vector((0, 0.01, 0.01))
     dist = half_w / math.tan(hfov / 2)
@@ -694,3 +817,4 @@ def grid_camera(plan, lo, hi, board_size):
     cam.rotation_quaternion = (target - cam.location).to_track_quat("-Z", "Y")
     # no depth of field: the counters are camera-attached and must stay sharp
     return cam
+
