@@ -1,6 +1,6 @@
 name: GTA Buzz render
 
-# Rend les Shorts GTA 6 (motion design + voix ElevenLabs) à chaque push de specs
+# Rend les Shorts GTA 6 (motion design + voix Kokoro gratuite, ou ElevenLabs si secret) à chaque push de specs
 # sur la branche gta6-buzz, ou à la demande. MP4 -> Google Drive (dossier GTA6-Buzz) + Artifacts.
 
 on:
@@ -39,8 +39,17 @@ jobs:
           python-version: "3.11"
       - name: Deps
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng > /dev/null
           pip install -q -r requirements.txt
+          # Voix off gratuite Kokoro-82M (CPU) : torch CPU pour éviter les 2 Go de CUDA
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q -r requirements-tts.txt
+
+      - name: Cache modèle Kokoro
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: kokoro-hf-v1
 
       - name: Specs à rendre
         id: pick
@@ -64,7 +73,9 @@ jobs:
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
-          [ -n "$ELEVENLABS_API_KEY" ] || echo "::warning::Secret ELEVENLABS_API_KEY absent : vidéos sans voix off"
+          # ElevenLabs si le secret existe, sinon Kokoro gratuit (échoue si Kokoro est cassé)
+          if [ -n "$ELEVENLABS_API_KEY" ]; then export TTS_PROVIDER=elevenlabs; else export TTS_PROVIDER=kokoro; fi
+          echo "Voix off : $TTS_PROVIDER"
           status=0
           for t in ${{ steps.pick.outputs.list }}; do python run.py render "$t" || status=1; done
           exit $status

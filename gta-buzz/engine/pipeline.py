@@ -17,9 +17,10 @@ def build(spec_path, use_tts=True, force=False):
     work = outdir / "_work"
     work.mkdir(parents=True, exist_ok=True)
 
-    voices, tts_on = voice_scenes(spec, work, use_tts)
+    voices, provider = voice_scenes(spec, work, use_tts)
+    tts_on = provider != "none"
     report = check_spec(spec, [v["duration"] for v in voices])
-    report["voice"] = "elevenlabs" if tts_on else "aucune (musique seule)"
+    report["voice"] = provider if tts_on else "aucune (musique seule)"
     (outdir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if not report["ok"] and not force:
         return None, report

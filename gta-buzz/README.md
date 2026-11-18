@@ -12,7 +12,7 @@ cp .env.example .env      # puis remplis tes clés (facultatif)
 set -a; source .env; set +a
 ```
 
-Sans clé, tout fonctionne : les vidéos sortent avec la musique seule. Avec `ELEVENLABS_API_KEY` et `VOICE_FR` / `VOICE_EN`, la voix off est ajoutée et les sous-titres se calent dessus.
+Voix off : `pip install -r requirements-tts.txt` et `espeak-ng` installent Kokoro, une voix gratuite. Sans Kokoro ni clé ElevenLabs, les vidéos sortent avec la musique seule.
 
 ## Workflow quotidien (10 min)
 
@@ -68,11 +68,13 @@ Chaque push d'un fichier dans `gta-buzz/specs/` lance le workflow **GTA Buzz ren
 2. Il dépose le MP4 et `publication.json` sur Google Drive, dans `GTA6-Buzz/<id>/`, grâce au secret `RCLONE_CONF` déjà utilisé par l'ASMR.
 3. Il garde une copie dans les Artifacts du run pendant 14 jours.
 
-**À faire une fois :** ajouter la clé ElevenLabs dans *Settings → Secrets and variables → Actions*, sous le nom `ELEVENLABS_API_KEY`.
+**Voix off gratuite par défaut : [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** (licence Apache 2.0, tourne sur le CPU du runner, sans clé ni crédits).
 
-Voix par défaut, modifiables via les variables `VOICE_FR` / `VOICE_EN` :
+- FR : `ff_siwis`
+- EN : `am_michael`
 
-- FR : Corentin (`IHngRooVccHyPqB4uQkG`)
-- EN : Brian (`nPczCjzI2devNBz1zQrb`)
+Pour changer de voix sur une vidéo, ajoute `"kokoro_voice"` dans sa spec. Pour changer le débit, ajoute `"speed"` (1.08 par défaut).
+
+Option payante : si le secret `ELEVENLABS_API_KEY` existe, ElevenLabs remplace Kokoro automatiquement.
 
 On peut aussi lancer un rendu à la main : onglet *Actions* → *GTA Buzz render* → *Run workflow*.

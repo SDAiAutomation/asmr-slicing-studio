@@ -19,6 +19,15 @@ ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
+# Voix off : auto = ElevenLabs si clé, sinon Kokoro si installé, sinon sans voix
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "auto")  # auto | kokoro | elevenlabs | none
+KOKORO_LANG = {"fr": "f", "en": "a"}
+KOKORO_VOICES = {
+    "fr": os.getenv("KOKORO_VOICE_FR", "ff_siwis"),
+    "en": os.getenv("KOKORO_VOICE_EN", "am_michael"),
+}
+KOKORO_SPEED = float(os.getenv("KOKORO_SPEED", "1.08"))
+
 # Voix par défaut selon la langue (à remplacer par tes voice_id ElevenLabs)
 DEFAULT_VOICES = {
     "fr": os.getenv("VOICE_FR", "IHngRooVccHyPqB4uQkG"),  # Corentin (GrowthOS), jeune, dynamique
