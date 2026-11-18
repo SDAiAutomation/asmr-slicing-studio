@@ -11,18 +11,11 @@ import urllib.request
 from pathlib import Path
 
 from . import config
+from .align import align, estimate
 
 
 def _estimate_words(text: str, duration: float):
-    words = text.split()
-    weights = [len(w) + 2 for w in words]
-    total = sum(weights) or 1
-    t, out = 0.0, []
-    for w, wt in zip(words, weights):
-        d = duration * wt / total
-        out.append((w, t, t + d))
-        t += d
-    return out
+    return estimate(text, duration)
 
 
 def _words_from_alignment(al: dict):
@@ -103,7 +96,7 @@ def _kokoro(text: str, lang: str, voice: str, dest: Path, speed: float):
         w.setframerate(24000)
         w.writeframes(pcm.tobytes())
     dur = len(wav) / 24000
-    return _estimate_words(text, dur), dur
+    return align(text, dest, lang, dur), dur
 
 
 def pick_provider(use_tts: bool) -> str:

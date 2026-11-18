@@ -43,5 +43,6 @@
       "voice": "Did you watch the launch live? Tell me in the comments."
     }
   ],
-  "kokoro_voice": "am_michael"
+  "kokoro_voice": "am_michael",
+  "version": 2
 }

@@ -31,7 +31,7 @@ def ease_out(x):
 
 
 def wrap(text, fnt, max_w):
-    text = re.sub(r" ([?!:;%])", "\u00a0\\1", text)
+    text = re.sub(r" ([?!:;%$€])", "\u00a0\\1", text)
     words, lines, cur = [w for w in text.split(" ") if w], [], ""
     for w in words:
         test = (cur + " " + w).strip()
@@ -46,6 +46,14 @@ def wrap(text, fnt, max_w):
 
 
 def fit_font(text, weight, max_size, max_w, max_lines):
+    # d'abord : tenir sur une ligne sans descendre sous 72 % de la taille max
+    size = max_size
+    while size >= max_size * 0.72:
+        f = font(weight, size)
+        lines = wrap(text, f, max_w)
+        if len(lines) == 1 and f.getlength(lines[0]) <= max_w:
+            return f, lines
+        size -= 6
     size = max_size
     while size > 40:
         f = font(weight, size)
@@ -62,7 +70,7 @@ def text_block(text, weight, max_size, color, max_w=940, max_lines=3, glow=None,
     f, lines = fit_font(text, weight, max_size, max_w, max_lines)
     asc, desc = f.getmetrics()
     lh = int((asc + desc) * spacing)
-    pad = 60
+    pad = 70 if glow else 30
     bw = int(max(f.getlength(l) for l in lines)) + 2 * pad
     bh = lh * len(lines) + 2 * pad
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
@@ -73,11 +81,8 @@ def text_block(text, weight, max_size, color, max_w=940, max_lines=3, glow=None,
                stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
     if glow:
         g = Image.new("RGBA", layer.size, glow + (0,))
-        g.putalpha(layer.getchannel("A").filter(ImageFilter.GaussianBlur(22)))
-        base = Image.new("RGBA", layer.size, (0, 0, 0, 0))
-        base = Image.alpha_composite(base, g)
-        base = Image.alpha_composite(base, g)
-        layer = Image.alpha_composite(base, layer)
+        g.putalpha(layer.getchannel("A").filter(ImageFilter.GaussianBlur(16)).point(lambda v: int(v * 0.75)))
+        layer = Image.alpha_composite(g, layer)
     return layer
 
 
@@ -120,9 +125,14 @@ def build_background(th):
         yy = int(r * 0.9) + k * 34
         md.rectangle([0, yy, 2 * r, yy + 5 + k * 3], fill=0)
     sun.putalpha(mask)
-    glow = sun.filter(ImageFilter.GaussianBlur(40))
-    img.alpha_composite(glow, (W // 2 - r, HY - int(r * 1.45)))
-    img.alpha_composite(sun, (W // 2 - r, HY - int(r * 1.45)))
+    m = 120  # marge pour que le flou ne soit pas coupé (sinon carré visible)
+    halo = Image.new("RGBA", (2 * r + 2 * m, 2 * r + 2 * m), (0, 0, 0, 0))
+    halo.alpha_composite(sun, (m, m))
+    halo = halo.filter(ImageFilter.GaussianBlur(45))
+    halo.putalpha(halo.getchannel("A").point(lambda v: int(v * 0.8)))
+    sx, sy = W // 2 - r, HY - int(r * 1.45)
+    img.alpha_composite(halo, (sx - m, sy - m))
+    img.alpha_composite(sun, (sx, sy))
     # masque le soleil sous l'horizon
     ImageDraw.Draw(img).rectangle([0, HY, W, H], fill=th["ground"] + (255,))
     # étoiles
@@ -135,22 +145,54 @@ def build_background(th):
     return img
 
 
-def draw_grid(frame, th, t):
-    d = ImageDraw.Draw(frame)
+GRID_PERIOD = 50  # images par cycle (boucle parfaite)
+_GRID_CACHE = {}
+
+
+def _grid_layer(th, k_phase):
+    """Grille anticrénelée : dessinée en 2x puis réduite (une fois par phase)."""
+    key = (th["grid"], k_phase)
+    if key in _GRID_CACHE:
+        return _GRID_CACHE[key]
+    S = 2
+    gh = H - HY
+    big = Image.new("RGBA", (W * S, gh * S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(big)
     col = th["grid"]
-    vx = W / 2
-    # lignes fuyantes
+    vx = W * S / 2
     for i in range(-14, 15):
-        x_bottom = vx + i * 160
-        d.line([(vx + i * 8, HY), (x_bottom, H)], fill=col + (150,), width=2)
-    # lignes horizontales qui avancent
-    phase = (t * 0.6) % 1.0
+        d.line([(vx + i * 8 * S, 0), (vx + i * 160 * S, gh * S)], fill=col + (110,), width=2 * S)
+    phase = k_phase / GRID_PERIOD
     for k in range(14):
         z = (k + phase) / 14
-        yy = HY + (H - HY) * (z ** 2.2)
-        a = int(60 + 160 * z)
-        d.line([(0, yy), (W, yy)], fill=col + (a,), width=2 if z < 0.5 else 3)
-    d.line([(0, HY), (W, HY)], fill=th["grid"] + (255,), width=4)
+        yy = gh * S * (z ** 2.2)
+        d.line([(0, yy), (W * S, yy)], fill=col + (int(50 + 130 * z),), width=(2 if z < 0.5 else 3) * S)
+    d.line([(0, 0), (W * S, 0)], fill=col + (255,), width=4 * S)
+    layer = big.resize((W, gh), Image.LANCZOS)
+    _GRID_CACHE[key] = layer
+    return layer
+
+
+def draw_grid(frame, th, t):
+    k = int(t * FPS) % GRID_PERIOD
+    frame.alpha_composite(_grid_layer(th, k), (0, HY))
+
+
+_BAND = None
+
+
+def draw_caption_band(frame):
+    """Bande sombre en dégradé derrière les sous-titres : lisibles sur la grille."""
+    global _BAND
+    if _BAND is None:
+        h = 420
+        a = np.zeros((h, 1), dtype=np.float32)
+        y = np.arange(h) / (h - 1)
+        a[:, 0] = np.clip(1 - np.abs(y - 0.5) * 2, 0, 1) ** 0.6 * 190
+        band = np.zeros((h, W, 4), dtype=np.uint8)
+        band[..., 3] = a.astype(np.uint8)
+        _BAND = Image.fromarray(band, "RGBA")
+    frame.alpha_composite(_BAND, (0, 1370))
 
 
 # ---------------------------------------------------------------- scènes
@@ -189,7 +231,8 @@ class SceneRenderer:
         dy = (1 - intro) * 70
         t = sc["type"]
         if t in ("hook", "text", "cta"):
-            punch = 1 + 0.18 * (1 - ease_out(lt / 0.3)) if t == "hook" else 1.0
+            drift = 1 + 0.05 * (lt / max(dur, 0.1))
+            punch = (1 + 0.18 * (1 - ease_out(lt / 0.3)) if t == "hook" else 1.0) * drift
             big = self.layers["big"]
             small = self.layers.get("small")
             total = big.height + (small.height - 40 if small else 0)
@@ -210,7 +253,7 @@ class SceneRenderer:
             cy = (CONTENT_Y[0] + CONTENT_Y[1]) / 2 - 40
             if top:
                 paste(frame, top, W / 2, cy - num.height / 2 - top.height / 2 + 70 + dy, a)
-            paste(frame, num, W / 2, cy + dy, a)
+            paste(frame, num, W / 2, cy + dy, a, 1 + 0.05 * (lt / max(dur, 0.1)))
             if small:
                 a2 = min(ease_out((lt - 0.4) / 0.45), outro)
                 paste(frame, small, W / 2, cy + num.height / 2 + small.height / 2 - 80 + (1 - a2) * 60, a2)
@@ -259,7 +302,7 @@ def draw_caption(frame, chunks, lt, th):
             cur = ch
     if not cur:
         return
-    f = font("Black", 76)
+    f = font("Black", 84)
     words = [w[0] for w in cur]
     space = f.getlength(" ")
     widths = [f.getlength(w) for w in words]
@@ -269,13 +312,13 @@ def draw_caption(frame, chunks, lt, th):
         half = len(words) // 2 or 1
         lines = [list(range(half)), list(range(half, len(words)))]
     d = ImageDraw.Draw(frame)
-    y = 1470
+    active_i = max([i for i, w in enumerate(cur) if w[1] <= lt] or [0])
+    y = 1470 if len(lines) == 1 else 1430
     for line in lines:
         lw = sum(widths[i] for i in line) + space * (len(line) - 1)
         x = (W - lw) / 2
         for i in line:
-            active = cur[i][1] <= lt <= cur[i][2] + 0.05
-            col = th["accent2"] if active else (255, 255, 255)
+            col = th["accent2"] if i == active_i else (255, 255, 255)
             d.text((x, y), words[i], font=f, fill=col + (255,), stroke_width=7, stroke_fill=(0, 0, 0, 255))
             x += widths[i] + space
         y += 96
@@ -308,10 +351,12 @@ def render_video(spec, voices, workdir: Path, music_path: Path, out_path: Path, 
         d = ImageDraw.Draw(frame)
         # barre de progression + badge
         d.rectangle([0, 0, int(W * t / total), 12], fill=th["accent"] + (255,))
-        d.rounded_rectangle([W / 2 - tag.width / 2 + 40, 150, W / 2 + tag.width / 2 - 40, 150 + tag.height - 70],
-                            radius=40, outline=th["accent"] + (255,), width=4, fill=(0, 0, 0, 140))
-        paste(frame, tag, W / 2, 150 + (tag.height - 70) / 2)
+        tw, thh = tag.width - 60, tag.height - 60  # text_block sans halo : marge de 30 px
+        d.rounded_rectangle([W / 2 - tw / 2 - 36, 150, W / 2 + tw / 2 + 36, 150 + thh + 24],
+                            radius=(thh + 24) // 2, outline=th["accent"] + (255,), width=4, fill=(0, 0, 0, 140))
+        paste(frame, tag, W / 2, 150 + (thh + 24) / 2 + 4)
         renderers[si].draw(frame, lt, durations[si])
+        draw_caption_band(frame)
         draw_caption(frame, chunks[si], lt, th)
         if spec.get("sources"):
             s = ("Sources : " if spec["lang"] == "fr" else "Sources: ") + spec["sources"]

@@ -43,5 +43,6 @@
       "voice": "Toi, tu as regardé le lancement en direct ? Dis-le en commentaire."
     }
   ],
-  "kokoro_voice": "ff_siwis"
+  "kokoro_voice": "ff_siwis",
+  "version": 2
 }

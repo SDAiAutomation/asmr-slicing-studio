@@ -55,5 +55,6 @@
       "voice": "Et toi, tu poses ton jeudi ? Dis-le en commentaire."
     }
   ],
-  "kokoro_voice": "ff_siwis"
+  "kokoro_voice": "ff_siwis",
+  "version": 2
 }
