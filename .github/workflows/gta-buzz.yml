@@ -26,7 +26,7 @@ env:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: gta-buzz
@@ -39,7 +39,7 @@ jobs:
           python-version: "3.11"
       - name: Deps
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng > /dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng rclone > /dev/null
           pip install -q -r requirements.txt
           # Voix off gratuite Kokoro-82M (CPU) : torch CPU pour éviter les 2 Go de CUDA
           pip install -q torch --index-url https://download.pytorch.org/whl/cpu
@@ -98,7 +98,6 @@ jobs:
         run: |
           [ -n "$RCLONE_CONF" ] || { echo "Pas de RCLONE_CONF : vidéos dans les Artifacts"; exit 0; }
           ls out/*/*.mp4 >/dev/null 2>&1 || exit 0
-          sudo apt-get install -y -qq rclone > /dev/null
           mkdir -p ~/.config/rclone && printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
           REMOTE=$(rclone listremotes | head -1)
           for d in out/*/; do
