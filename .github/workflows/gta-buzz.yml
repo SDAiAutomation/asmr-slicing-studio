@@ -1,0 +1,99 @@
+name: GTA Buzz render
+
+# Rend les Shorts GTA 6 (motion design + voix ElevenLabs) à chaque push de specs
+# sur la branche gta6-buzz, ou à la demande. MP4 -> Google Drive (dossier GTA6-Buzz) + Artifacts.
+
+on:
+  push:
+    branches: [gta6-buzz]
+    paths: ["gta-buzz/specs/**"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Spec ou dossier à rendre (relatif à gta-buzz/)"
+        default: "specs/"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gta-buzz-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DRIVE_FOLDER_ID: "1iyVCJ4oT4RdsRtiQWIOpO9P48u0gEzd7"   # même racine Drive, sous-dossier GTA6-Buzz
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: gta-buzz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          pip install -q -r requirements.txt
+
+      - name: Specs à rendre
+        id: pick
+        env:
+          BEFORE: ${{ github.event.before }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "list=${TARGET:-specs/}" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "list=specs/" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          FILES=$(git diff --name-only --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- specs/ | grep '\.json$' | sed 's#^gta-buzz/##' | tr '\n' ' ')
+          echo "list=${FILES}" >> "$GITHUB_OUTPUT"
+          echo "Specs : ${FILES:-aucune}"
+
+      - name: Render
+        if: steps.pick.outputs.list != ''
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          [ -n "$ELEVENLABS_API_KEY" ] || echo "::warning::Secret ELEVENLABS_API_KEY absent : vidéos sans voix off"
+          status=0
+          for t in ${{ steps.pick.outputs.list }}; do python run.py render "$t" || status=1; done
+          exit $status
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta-buzz-${{ github.run_number }}
+          path: |
+            gta-buzz/out/*/*.mp4
+            gta-buzz/out/*/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Drive
+        if: always()
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: |
+          [ -n "$RCLONE_CONF" ] || { echo "Pas de RCLONE_CONF : vidéos dans les Artifacts"; exit 0; }
+          ls out/*/*.mp4 >/dev/null 2>&1 || exit 0
+          sudo apt-get install -y -qq rclone > /dev/null
+          mkdir -p ~/.config/rclone && printf '%s\n' "$RCLONE_CONF" > ~/.config/rclone/rclone.conf
+          REMOTE=$(rclone listremotes | head -1)
+          for d in out/*/; do
+            id=$(basename "$d")
+            [ -f "$d/$id.mp4" ] || continue
+            rclone copy "$d" "${REMOTE}GTA6-Buzz/$id" --include "*.mp4" --include "publication.json" \
+              --drive-root-folder-id "$DRIVE_FOLDER_ID"
+            echo "Drive : GTA6-Buzz/$id"
+          done

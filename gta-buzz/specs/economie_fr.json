@@ -1,0 +1,22 @@
+{
+  "id": "gta6-economie-fr",
+  "lang": "fr",
+  "theme": "money",
+  "tag": "GTA 6 • ÉCONOMIE",
+  "title": "GTA 6 va coûter 1 milliard $ à l'économie 😳 #GTA6",
+  "description": "Congés, arrêts maladie, 13 ans d'attente : la sortie de GTA 6 a un coût bien réel.",
+  "hashtags": ["GTA6", "GTAVI", "argent", "economie", "shorts"],
+  "sources": "Forbes, 17/11/2026",
+  "scenes": [
+    {"type": "hook", "big": "1 MILLIARD $", "small": "même si tu ne l'achètes pas",
+     "voice": "GTA 6 pourrait coûter un milliard de dollars à l'économie américaine. Et ce n'est pas le prix du jeu."},
+    {"type": "stat", "value": 13, "prefix": "+", "suffix": " %", "label": "de demandes de congé ce jeudi aux États-Unis",
+     "voice": "Aux États-Unis, les demandes de congé pour ce jeudi sont treize pour cent plus élevées qu'un jeudi normal."},
+    {"type": "stat", "value": 1, "suffix": " Md $", "label": "de productivité perdue en arrêts maladie (estimation)",
+     "voice": "Et les arrêts maladie de circonstance coûteraient un milliard de dollars de productivité."},
+    {"type": "versus", "left": {"top": "GTA V", "big": "2013"}, "right": {"top": "GTA 6", "big": "2026"},
+     "small": "13 ans d'attente", "voice": "En même temps, les fans attendent depuis treize ans."},
+    {"type": "cta", "big": "Et toi ?", "small": "Tu poses ton jeudi ?",
+     "voice": "Et toi, tu poses ton jeudi ? Dis-le en commentaire."}
+  ]
+}
