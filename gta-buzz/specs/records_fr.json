@@ -5,17 +5,43 @@
   "tag": "GTA 6 • RECORDS",
   "title": "GTA 6 a explosé tous les records avant même de sortir 🤯 #GTA6",
   "description": "40 milliards de vues avant la sortie, 6,5 millions de spectateurs en même temps au lancement.",
-  "hashtags": ["GTA6", "GTAVI", "record", "gaming", "shorts"],
+  "hashtags": [
+    "GTA6",
+    "GTAVI",
+    "record",
+    "gaming",
+    "shorts"
+  ],
   "sources": "GatorStreams, YouTube",
   "scenes": [
-    {"type": "stat", "top": "Lancement de GTA 6", "value": 6.5, "decimals": 1, "suffix": " M",
-     "label": "de spectateurs en live en même temps",
-     "voice": "Six millions et demi de personnes regardaient GTA 6 en direct, en même temps. Un record absolu."},
-    {"type": "stat", "value": 40, "suffix": " Mds", "label": "de vues YouTube avant même la sortie",
-     "voice": "Avant même sa sortie, les vidéos GTA 6 avaient déjà fait quarante milliards de vues sur YouTube."},
-    {"type": "text", "big": "Pas encore sorti en Europe", "small": "au moment du record",
-     "voice": "Et au moment du record, le jeu n'était même pas encore sorti en Europe."},
-    {"type": "cta", "big": "Tu étais en live ?", "small": "Dis-le en commentaire",
-     "voice": "Toi, tu as regardé le lancement en direct ? Dis-le en commentaire."}
-  ]
+    {
+      "type": "stat",
+      "top": "Lancement de GTA 6",
+      "value": 6.5,
+      "decimals": 1,
+      "suffix": " M",
+      "label": "de spectateurs en live en même temps",
+      "voice": "Six millions et demi de personnes regardaient GTA 6 en direct, en même temps. Un record absolu."
+    },
+    {
+      "type": "stat",
+      "value": 40,
+      "suffix": " Mds",
+      "label": "de vues YouTube avant même la sortie",
+      "voice": "Avant même sa sortie, les vidéos GTA 6 avaient déjà fait quarante milliards de vues sur YouTube."
+    },
+    {
+      "type": "text",
+      "big": "Pas encore sorti en Europe",
+      "small": "au moment du record",
+      "voice": "Et au moment du record, le jeu n'était même pas encore sorti en Europe."
+    },
+    {
+      "type": "cta",
+      "big": "Tu étais en live ?",
+      "small": "Dis-le en commentaire",
+      "voice": "Toi, tu as regardé le lancement en direct ? Dis-le en commentaire."
+    }
+  ],
+  "kokoro_voice": "ff_siwis"
 }

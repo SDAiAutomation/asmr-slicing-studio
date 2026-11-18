@@ -5,17 +5,43 @@
   "tag": "GTA 6 • RECORDS",
   "title": "GTA 6 broke every record before it even launched 🤯 #GTA6",
   "description": "40 billion views before release, 6.5 million people watching at the same time at launch.",
-  "hashtags": ["GTA6", "GTAVI", "record", "gaming", "shorts"],
+  "hashtags": [
+    "GTA6",
+    "GTAVI",
+    "record",
+    "gaming",
+    "shorts"
+  ],
   "sources": "GatorStreams, YouTube",
   "scenes": [
-    {"type": "stat", "top": "GTA 6 launch", "value": 6.5, "decimals": 1, "suffix": "M",
-     "label": "people watching live at the same time",
-     "voice": "Six and a half million people were watching GTA 6 live at the same time. An all-time record."},
-    {"type": "stat", "value": 40, "suffix": "B", "label": "YouTube views before release",
-     "voice": "Before it even came out, GTA 6 videos had already pulled forty billion views on YouTube."},
-    {"type": "text", "big": "Not even out in Europe", "small": "when the record fell",
-     "voice": "And when that record fell, the game wasn't even out in Europe yet."},
-    {"type": "cta", "big": "Were you watching?", "small": "Tell me in the comments",
-     "voice": "Did you watch the launch live? Tell me in the comments."}
-  ]
+    {
+      "type": "stat",
+      "top": "GTA 6 launch",
+      "value": 6.5,
+      "decimals": 1,
+      "suffix": "M",
+      "label": "people watching live at the same time",
+      "voice": "Six and a half million people were watching GTA 6 live at the same time. An all-time record."
+    },
+    {
+      "type": "stat",
+      "value": 40,
+      "suffix": "B",
+      "label": "YouTube views before release",
+      "voice": "Before it even came out, GTA 6 videos had already pulled forty billion views on YouTube."
+    },
+    {
+      "type": "text",
+      "big": "Not even out in Europe",
+      "small": "when the record fell",
+      "voice": "And when that record fell, the game wasn't even out in Europe yet."
+    },
+    {
+      "type": "cta",
+      "big": "Were you watching?",
+      "small": "Tell me in the comments",
+      "voice": "Did you watch the launch live? Tell me in the comments."
+    }
+  ],
+  "kokoro_voice": "am_michael"
 }
