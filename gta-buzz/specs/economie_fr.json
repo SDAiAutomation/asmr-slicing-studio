@@ -4,57 +4,30 @@
   "theme": "money",
   "tag": "GTA 6 • ÉCONOMIE",
   "title": "GTA 6 va coûter 1 milliard $ à l'économie 😳 #GTA6",
-  "description": "Congés, arrêts maladie, 13 ans d'attente : la sortie de GTA 6 a un coût bien réel.",
-  "hashtags": [
-    "GTA6",
-    "GTAVI",
-    "argent",
-    "economie",
-    "shorts"
-  ],
-  "sources": "Forbes, 17/11/2026",
-  "scenes": [
-    {
-      "type": "hook",
-      "big": "1 MILLIARD $",
-      "small": "même si tu ne l'achètes pas",
-      "voice": "GTA 6 pourrait coûter un milliard de dollars à l'économie américaine. Et ce n'est pas le prix du jeu."
-    },
-    {
-      "type": "stat",
-      "value": 13,
-      "prefix": "+",
-      "suffix": " %",
-      "label": "de demandes de congé ce jeudi aux États-Unis",
-      "voice": "Aux États-Unis, les demandes de congé pour ce jeudi sont treize pour cent plus élevées qu'un jeudi normal."
-    },
-    {
-      "type": "stat",
-      "value": 1,
-      "suffix": " Md $",
-      "label": "de productivité perdue en arrêts maladie (estimation)",
-      "voice": "Et les arrêts maladie de circonstance coûteraient un milliard de dollars de productivité."
-    },
-    {
-      "type": "versus",
-      "left": {
-        "top": "GTA V",
-        "big": "2013"
-      },
-      "right": {
-        "top": "GTA 6",
-        "big": "2026"
-      },
-      "small": "13 ans d'attente",
-      "voice": "En même temps, les fans attendent depuis treize ans."
-    },
-    {
-      "type": "cta",
-      "big": "Et toi ?",
-      "small": "Tu poses ton jeudi ?",
-      "voice": "Et toi, tu poses ton jeudi ? Dis-le en commentaire."
-    }
-  ],
+  "description": "Congés, arrêts maladie, 40 milliards de vues, 13 ans d'attente : la sortie de GTA 6 a un coût bien réel.",
+  "hashtags": ["GTA6", "GTAVI", "argent", "economie", "shorts"],
+  "sources": "Forbes (17/11/2026), YouTube, Rockstar",
   "kokoro_voice": "ff_siwis",
-  "version": 2
+  "version": 3,
+  "scenes": [
+    {"type": "hook", "big": "1 MILLIARD $", "small": "même si tu ne l'achètes pas",
+     "voice": "GTA 6 pourrait coûter un milliard de dollars à l'économie américaine. Et ce n'est pas le prix du jeu."},
+    {"type": "stat", "value": 13, "prefix": "+", "suffix": " %", "label": "de demandes de congé ce jeudi aux États-Unis",
+     "voice": "Aux États-Unis, les demandes de congé pour ce jeudi sont treize pour cent plus élevées qu'un jeudi normal de novembre."},
+    {"type": "stat", "value": 1, "suffix": " Md $", "label": "de productivité perdue en arrêts maladie (estimation)",
+     "voice": "Et les arrêts maladie de circonstance coûteraient environ un milliard de dollars de productivité."},
+    {"type": "versus", "left": {"top": "GTA V", "big": "2013"}, "right": {"top": "GTA 6", "big": "2026"},
+     "small": "13 ans d'attente",
+     "voice": "Pourquoi un tel engouement ? Parce que le dernier épisode, GTA 5, est sorti en deux mille treize. Ça fait treize ans."},
+    {"type": "text", "big": "Repoussé 2 fois", "small": "2025, puis mai 2026, puis novembre",
+     "voice": "Et le jeu a été repoussé deux fois. D'abord prévu en deux mille vingt-cinq, puis en mai deux mille vingt-six, il sort finalement le dix-neuf novembre."},
+    {"type": "stat", "value": 40, "suffix": " Mds", "label": "de vues YouTube avant la sortie",
+     "voice": "Ce buzz vaut de l'or. Avant même sa sortie, les vidéos sur GTA 6 avaient déjà fait quarante milliards de vues sur YouTube."},
+    {"type": "text", "big": "Tout le monde en parle", "small": "même hors jeux vidéo",
+     "voice": "Résultat : même des créateurs qui ne parlent jamais de jeux vidéo préparent du contenu sur GTA 6. Mode, humour, beauté, tout le monde veut sa part."},
+    {"type": "text", "big": "Pas de mode en ligne", "small": "au lancement",
+     "voice": "Et ce n'est que le début. Le jeu sort sans mode en ligne. La version multijoueur arrivera plus tard, et Rockstar n'a encore donné aucune date."},
+    {"type": "cta", "big": "Et toi ?", "small": "Tu poses ton jeudi ?",
+     "voice": "Et toi, tu poses ton jeudi pour jouer ? Dis-le en commentaire, et abonne-toi pour décrypter l'argent derrière l'actu."}
+  ]
 }

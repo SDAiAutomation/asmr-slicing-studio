@@ -19,6 +19,10 @@ def build(spec_path, use_tts=True, force=False):
 
     voices, provider = voice_scenes(spec, work, use_tts)
     tts_on = provider != "none"
+    # durée mini : on prolonge la scène finale (CTA) de quelques secondes si besoin
+    missing = config.MIN_VIDEO_SEC - sum(v["duration"] for v in voices)
+    if 0 < missing <= config.MAX_TAIL_PAD_SEC:
+        voices[-1]["duration"] += missing
     report = check_spec(spec, [v["duration"] for v in voices])
     report["voice"] = provider if tts_on else "aucune (musique seule)"
     (outdir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

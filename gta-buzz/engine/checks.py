@@ -21,10 +21,11 @@ def _words(text):
 def check_spec(spec, durations):
     errors, warnings = [], []
     total = sum(durations)
-    if total < 12:
-        errors.append(f"Vidéo trop courte ({total:.1f} s < 12 s)")
-    if total > 60:
-        warnings.append(f"Vidéo longue ({total:.1f} s) : TikTok/Reels préfèrent moins de 60 s")
+    from .config import MIN_VIDEO_SEC
+    if total < MIN_VIDEO_SEC - 0.5:
+        errors.append(f"Vidéo trop courte ({total:.1f} s < {MIN_VIDEO_SEC:.0f} s) : ajoute des scènes")
+    if total > 90:
+        warnings.append(f"Vidéo longue ({total:.1f} s) : vise 61-75 s")
 
     title = spec.get("title", "")
     if not any(k in title.lower() for k in TITLE_KEYS):

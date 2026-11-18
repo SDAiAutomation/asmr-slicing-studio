@@ -50,7 +50,7 @@ Chaque scène a un champ `voice` : c'est le texte lu par la voix off, qui sert a
 - Aucun terme lié aux spoilers, fuites ou piratage (`leak`, `fuite`, `spoiler`, `ending`…).
 - Aucun mot violent dans les 7 premières secondes (règle de pub YouTube de septembre 2026).
 - Toute vidéo qui affiche des chiffres a un champ `sources` renseigné.
-- La durée fait au moins 12 s. Au-delà de 60 s, c'est seulement un avertissement.
+- La durée fait au moins 61 s (seuil de rémunération TikTok). Si la voix finit un peu avant, la scène finale est prolongée de 6 s au maximum.
 
 `--force` passe outre les garde-fous, à éviter.
 

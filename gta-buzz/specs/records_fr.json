@@ -4,45 +4,33 @@
   "theme": "vice",
   "tag": "GTA 6 • RECORDS",
   "title": "GTA 6 a explosé tous les records avant même de sortir 🤯 #GTA6",
-  "description": "40 milliards de vues avant la sortie, 6,5 millions de spectateurs en même temps au lancement.",
-  "hashtags": [
-    "GTA6",
-    "GTAVI",
-    "record",
-    "gaming",
-    "shorts"
-  ],
-  "sources": "GatorStreams, YouTube",
-  "scenes": [
-    {
-      "type": "stat",
-      "top": "Lancement de GTA 6",
-      "value": 6.5,
-      "decimals": 1,
-      "suffix": " M",
-      "label": "de spectateurs en live en même temps",
-      "voice": "Six millions et demi de personnes regardaient GTA 6 en direct, en même temps. Un record absolu."
-    },
-    {
-      "type": "stat",
-      "value": 40,
-      "suffix": " Mds",
-      "label": "de vues YouTube avant même la sortie",
-      "voice": "Avant même sa sortie, les vidéos GTA 6 avaient déjà fait quarante milliards de vues sur YouTube."
-    },
-    {
-      "type": "text",
-      "big": "Pas encore sorti en Europe",
-      "small": "au moment du record",
-      "voice": "Et au moment du record, le jeu n'était même pas encore sorti en Europe."
-    },
-    {
-      "type": "cta",
-      "big": "Tu étais en live ?",
-      "small": "Dis-le en commentaire",
-      "voice": "Toi, tu as regardé le lancement en direct ? Dis-le en commentaire."
-    }
-  ],
+  "description": "6,5 millions de spectateurs en même temps, 40 milliards de vues avant la sortie, 13 ans d'attente : les chiffres fous du lancement de GTA 6.",
+  "hashtags": ["GTA6", "GTAVI", "record", "gaming", "shorts"],
+  "sources": "GatorStreams, YouTube, Gadget Review",
   "kokoro_voice": "ff_siwis",
-  "version": 2
+  "version": 3,
+  "scenes": [
+    {"type": "stat", "top": "Lancement de GTA 6", "value": 6.5, "decimals": 1, "suffix": " M",
+     "label": "de spectateurs en live en même temps",
+     "voice": "Six millions et demi de personnes. C'est le nombre de spectateurs qui regardaient GTA 6 en direct, en même temps, le jour du lancement. Un record absolu pour un jeu vidéo."},
+    {"type": "text", "big": "Pas encore sorti en Europe", "small": "au moment du record",
+     "voice": "Le plus fou ? À ce moment-là, le jeu n'était même pas sorti en Europe. Il venait juste de se débloquer en Nouvelle-Zélande, à midi, heure belge."},
+    {"type": "stat", "value": 575750, "label": "spectateurs sur un seul live Twitch",
+     "voice": "Le plus gros live, celui du streamer russe HoneyMad, a atteint cinq cent soixante-quinze mille spectateurs sur Twitch."},
+    {"type": "stat", "value": 237377, "label": "pour IShowSpeed sur YouTube",
+     "voice": "Et IShowSpeed a réuni plus de deux cent trente-sept mille personnes en même temps sur YouTube."},
+    {"type": "stat", "value": 40, "suffix": " Mds", "label": "de vues YouTube avant la sortie",
+     "voice": "Avant même la sortie, les vidéos sur GTA 6 avaient déjà fait quarante milliards de vues sur YouTube."},
+    {"type": "stat", "value": 900, "suffix": " Mds", "label": "de vues pour toute la saga GTA",
+     "voice": "Et toute la saga GTA dépasse les neuf cents milliards de vues sur la plateforme."},
+    {"type": "text", "big": "24 h de live", "small": "organisé par YouTube",
+     "voice": "YouTube a même organisé un live de vingt-quatre heures pour la sortie, comme pour une finale de coupe du monde."},
+    {"type": "text", "big": "10 000 jeux offerts", "small": "par la plateforme Kick",
+     "voice": "De son côté, la plateforme Kick offre dix mille copies du jeu aux spectateurs qui regardent trois heures de live."},
+    {"type": "versus", "left": {"top": "GTA V", "big": "2013"}, "right": {"top": "GTA 6", "big": "2026"},
+     "small": "13 ans d'attente",
+     "voice": "Normal : les fans attendent ce jeu depuis la sortie de GTA 5, en deux mille treize. Treize ans d'attente."},
+    {"type": "cta", "big": "Tu étais en live ?", "small": "Dis-le en commentaire",
+     "voice": "Et toi, tu as regardé le lancement en direct ? Dis-le en commentaire, et abonne-toi pour la suite."}
+  ]
 }

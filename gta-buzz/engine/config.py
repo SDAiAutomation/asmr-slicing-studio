@@ -12,6 +12,9 @@ W, H, FPS = 1080, 1920, 30
 # Débit de parole estimé quand il n'y a pas de voix off (mots / seconde)
 WORDS_PER_SEC = 2.6
 MIN_SCENE_SEC = 2.8
+# TikTok ne rémunère (Creator Rewards) que les vidéos de plus d'1 min
+MIN_VIDEO_SEC = float(os.getenv("MIN_VIDEO_SEC", "61"))
+MAX_TAIL_PAD_SEC = 6.0  # prolongation max de la scène finale pour atteindre la durée mini
 
 # Clés optionnelles (variables d'environnement)
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
@@ -26,7 +29,7 @@ KOKORO_VOICES = {
     "fr": os.getenv("KOKORO_VOICE_FR", "ff_siwis"),
     "en": os.getenv("KOKORO_VOICE_EN", "am_michael"),
 }
-KOKORO_SPEED = float(os.getenv("KOKORO_SPEED", "1.08"))
+KOKORO_SPEED = float(os.getenv("KOKORO_SPEED", "1.0"))
 
 # Voix par défaut selon la langue (à remplacer par tes voice_id ElevenLabs)
 DEFAULT_VOICES = {

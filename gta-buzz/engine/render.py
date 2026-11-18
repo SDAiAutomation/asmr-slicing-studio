@@ -54,6 +54,14 @@ def fit_font(text, weight, max_size, max_w, max_lines):
         if len(lines) == 1 and f.getlength(lines[0]) <= max_w:
             return f, lines
         size -= 6
+    # ensuite : 2 lignes sans descendre sous 80 %
+    size = max_size
+    while size >= max_size * 0.8 and max_lines >= 2:
+        f = font(weight, size)
+        lines = wrap(text, f, max_w)
+        if len(lines) <= 2 and all(f.getlength(l) <= max_w for l in lines):
+            return f, lines
+        size -= 6
     size = max_size
     while size > 40:
         f = font(weight, size)

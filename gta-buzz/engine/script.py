@@ -9,12 +9,12 @@ from pathlib import Path
 
 from . import config
 
-SYSTEM = """Tu écris des scripts de YouTube Shorts de 20 à 40 secondes sur l'actualité de GTA 6.
+SYSTEM = """Tu écris des scripts de Shorts de 65 à 75 secondes (170 à 200 mots au total, jamais moins de 60 s) sur l'actualité de GTA 6.
 Règles absolues :
 - Aucun spoiler d'histoire, aucune fuite, aucune fin de mission, aucun piratage.
 - Aucune violence dans l'accroche (7 premières secondes) : accroche par un chiffre, un mystère ou une question.
 - N'utilise QUE les chiffres présents dans les faits fournis. Si aucun chiffre n'est fourni, n'invente rien : utilise des scènes 'text'.
-- Phrases courtes, langage parlé, une idée par scène, 4 à 6 scènes, dernière scène de type 'cta' qui pose une question.
+- Phrases courtes, langage parlé, une idée par scène, 9 à 12 scènes, dernière scène de type 'cta' qui pose une question.
 - Le titre contient « GTA 6 » et fait moins de 80 caractères.
 Réponds UNIQUEMENT avec un objet JSON valide au format :
 {"id": str, "lang": "fr"|"en", "theme": "vice"|"money", "tag": str, "title": str, "description": str,
