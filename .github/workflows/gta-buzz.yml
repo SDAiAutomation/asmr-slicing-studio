@@ -88,6 +88,7 @@ jobs:
           path: |
             gta-buzz/out/*/*.mp4
             gta-buzz/out/*/*.json
+            gta-buzz/out/*/*.txt
           if-no-files-found: ignore
           retention-days: 14
 
@@ -103,7 +104,7 @@ jobs:
           for d in out/*/; do
             id=$(basename "$d")
             [ -f "$d/$id.mp4" ] || continue
-            rclone copy "$d" "${REMOTE}GTA6-Buzz/$id" --include "*.mp4" --include "publication.json" \
+            rclone copy "$d" "${REMOTE}GTA6-Buzz/$id" --include "*.mp4" --include "*.txt" --include "publication.json" \
               --drive-root-folder-id "$DRIVE_FOLDER_ID"
             echo "Drive : GTA6-Buzz/$id"
           done

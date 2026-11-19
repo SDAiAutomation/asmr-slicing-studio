@@ -18,7 +18,7 @@ Règles absolues :
 - Le titre contient « GTA 6 » et fait moins de 80 caractères.
 Réponds UNIQUEMENT avec un objet JSON valide au format :
 {"id": str, "lang": "fr"|"en", "theme": "vice"|"money", "tag": str, "title": str, "description": str,
- "hashtags": [str], "sources": str,
+ "hashtags": [str], "sources": str, "pinned_comment": str,
  "scenes": [
    {"type": "hook", "big": str, "small": str, "voice": str},
    {"type": "stat", "value": number, "decimals": int, "prefix": str, "suffix": str, "label": str, "voice": str},
@@ -26,7 +26,7 @@ Réponds UNIQUEMENT avec un objet JSON valide au format :
    {"type": "versus", "left": {"top": str, "big": str}, "right": {"top": str, "big": str}, "small": str, "voice": str},
    {"type": "cta", "big": str, "small": str, "voice": str}
  ]}
-'voice' = le texte lu par la voix off (il sert aussi de sous-titres). 'big' = 2 à 6 mots max."""
+'pinned_comment' = commentaire à épingler : une question qui fait répondre + une relance pour s'abonner (2 phrases max).\n'voice' = le texte lu par la voix off (il sert aussi de sous-titres). 'big' = 2 à 6 mots max."""
 
 
 def _call_claude(prompt: str) -> str:

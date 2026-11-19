@@ -27,7 +27,8 @@ python run.py render specs/auto/          # 4. rendu + garde-fous
 Chaque vidéo sort dans `out/<id>/` avec trois fichiers :
 
 - `<id>.mp4` : la vidéo à publier.
-- `publication.json` : le titre, la description et les hashtags à copier-coller.
+- `<id>.txt` : le titre, la description (avec les sources), les hashtags et le commentaire à épingler, prêts à copier-coller.
+- `publication.json` : les mêmes infos, au format machine.
 - `report.json` : le résultat des garde-fous.
 
 ## Format d'une spec
@@ -41,6 +42,8 @@ Une vidéo correspond à un fichier JSON dans `specs/`. Types de scènes disponi
 | `text` | `big`, `small` | Une idée forte |
 | `versus` | `left{top,big}`, `right{top,big}`, `small` | Comparaison |
 | `cta` | `big`, `small` | Question finale qui fait commenter |
+
+Champ facultatif `pinned_comment` : le commentaire à épingler. S'il est absent, il est construit à partir de la question finale.
 
 Chaque scène a un champ `voice` : c'est le texte lu par la voix off, qui sert aussi de sous-titres. Deux thèmes : `vice` (néon rose) et `money` (vert, pour Argent Simple).
 
