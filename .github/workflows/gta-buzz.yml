@@ -71,10 +71,13 @@ jobs:
       - name: Render
         if: steps.pick.outputs.list != ''
         env:
+          GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
-          # ElevenLabs si le secret existe, sinon Kokoro gratuit (échoue si Kokoro est cassé)
-          if [ -n "$ELEVENLABS_API_KEY" ]; then export TTS_PROVIDER=elevenlabs; else export TTS_PROVIDER=kokoro; fi
+          # Google Cloud TTS (crédits Google AI Pro) > ElevenLabs > Kokoro gratuit
+          if [ -n "$GOOGLE_TTS_API_KEY" ]; then export TTS_PROVIDER=google
+          elif [ -n "$ELEVENLABS_API_KEY" ]; then export TTS_PROVIDER=elevenlabs
+          else export TTS_PROVIDER=kokoro; fi
           echo "Voix off : $TTS_PROVIDER"
           status=0
           for t in ${{ steps.pick.outputs.list }}; do python run.py render "$t" || status=1; done

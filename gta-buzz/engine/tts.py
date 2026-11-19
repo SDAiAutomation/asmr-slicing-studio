@@ -99,10 +99,36 @@ def _kokoro(text: str, lang: str, voice: str, dest: Path, speed: float):
     return align(text, dest, lang, dur), dur
 
 
+# ---------------------------------------------------------------- Google Cloud TTS (crédits Google AI Pro)
+def _google(text: str, lang: str, voice: str, dest: Path, rate: float):
+    """Chirp 3 HD via l'API REST Text-to-Speech (clé d'API). Renvoie le minutage calé."""
+    lang_code = "-".join(voice.split("-")[:2])
+    body = {
+        "input": {"text": text},
+        "voice": {"languageCode": lang_code, "name": voice},
+        "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": 24000},
+    }
+    if abs(rate - 1.0) > 0.01:
+        body["audioConfig"]["speakingRate"] = rate
+    req = urllib.request.Request(
+        "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + config.GOOGLE_TTS_API_KEY,
+        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Google TTS {e.code} ({voice}) : {e.read()[:300]!r}") from e
+    dest.write_bytes(base64.b64decode(data["audioContent"]))  # WAV LINEAR16 avec en-tête
+    dur = _audio_duration(dest)
+    return align(text, dest, lang, dur), dur
+
+
 def pick_provider(use_tts: bool) -> str:
     if not use_tts:
         return "none"
     want = config.TTS_PROVIDER
+    if want in ("google", "auto") and config.GOOGLE_TTS_API_KEY:
+        return "google"
     if want in ("elevenlabs", "auto") and config.ELEVENLABS_API_KEY:
         return "elevenlabs"
     if want in ("kokoro", "auto"):
@@ -120,10 +146,33 @@ def voice_scenes(spec: dict, workdir: Path, use_tts: bool = True):
     provider = pick_provider(use_tts)
     voice_id = spec.get("voice_id") or config.DEFAULT_VOICES.get(spec["lang"], "")
     k_voice = spec.get("kokoro_voice") or config.KOKORO_VOICES.get(spec["lang"])
+    g_voice = spec.get("google_voice") or config.GOOGLE_VOICES.get(spec["lang"])
+    if provider == "google":
+        try:
+            return _voice_all(spec, workdir, "google", voice_id, k_voice, g_voice), "google"
+        except Exception as e:  # clé invalide, quota… : on ne bloque pas la production
+            print(f"   ⚠ Google TTS indisponible ({e}) : repli sur Kokoro")
+            provider = pick_provider_fallback()
+    return _voice_all(spec, workdir, provider, voice_id, k_voice, g_voice), provider
+
+
+def pick_provider_fallback() -> str:
+    try:
+        import kokoro  # noqa: F401
+        return "kokoro"
+    except ImportError:
+        return "none"
+
+
+def _voice_all(spec, workdir, provider, voice_id, k_voice, g_voice):
     results = []
     for i, sc in enumerate(spec["scenes"]):
         text = sc["voice"]
-        if provider == "elevenlabs":
+        if provider == "google":
+            wav = workdir / f"voice_{i:02d}.wav"
+            words, d = _google(text, spec["lang"], g_voice, wav, float(spec.get("google_rate", config.GOOGLE_SPEAKING_RATE)))
+            results.append({"audio": wav, "duration": max(config.MIN_SCENE_SEC, d + 0.3), "words": words})
+        elif provider == "elevenlabs":
             mp3 = workdir / f"voice_{i:02d}.mp3"
             words = _elevenlabs(text, voice_id, mp3)
             dur = max(config.MIN_SCENE_SEC, _audio_duration(mp3) + 0.35)
@@ -137,4 +186,4 @@ def voice_scenes(spec: dict, workdir: Path, use_tts: bool = True):
             dur = max(config.MIN_SCENE_SEC, n / config.WORDS_PER_SEC + 0.6)
             dur = float(sc.get("duration", dur))
             results.append({"audio": None, "duration": dur, "words": _estimate_words(text, dur - 0.4)})
-    return results, provider
+    return results

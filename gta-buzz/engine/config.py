@@ -22,8 +22,14 @@ ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
-# Voix off : auto = ElevenLabs si clé, sinon Kokoro si installé, sinon sans voix
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "auto")  # auto | kokoro | elevenlabs | none
+# Voix off : auto = Google Cloud TTS si clé, sinon ElevenLabs si clé, sinon Kokoro, sinon sans voix
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "auto")  # auto | google | kokoro | elevenlabs | none
+GOOGLE_TTS_API_KEY = os.getenv("GOOGLE_TTS_API_KEY", "")
+GOOGLE_VOICES = {  # voix Chirp 3 HD (les plus naturelles de Google)
+    "fr": os.getenv("GOOGLE_VOICE_FR", "fr-FR-Chirp3-HD-Charon"),
+    "en": os.getenv("GOOGLE_VOICE_EN", "en-US-Chirp3-HD-Charon"),
+}
+GOOGLE_SPEAKING_RATE = float(os.getenv("GOOGLE_SPEAKING_RATE", "1.0"))
 KOKORO_LANG = {"fr": "f", "en": "a"}
 KOKORO_VOICES = {
     "fr": os.getenv("KOKORO_VOICE_FR", "ff_siwis"),

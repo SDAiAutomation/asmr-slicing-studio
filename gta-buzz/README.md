@@ -78,6 +78,8 @@ Chaque push d'un fichier dans `gta-buzz/specs/` lance le workflow **GTA Buzz ren
 
 Pour changer de voix sur une vidéo, ajoute `"kokoro_voice"` dans sa spec. Pour changer le débit, ajoute `"speed"` (1.08 par défaut).
 
-Option payante : si le secret `ELEVENLABS_API_KEY` existe, ElevenLabs remplace Kokoro automatiquement.
+**Voix Google (recommandée) :** si le secret `GOOGLE_TTS_API_KEY` existe, la voix passe sur Google Cloud Text-to-Speech, payé avec les crédits Google Cloud inclus dans Google AI Pro. Les voix utilisées sont `fr-FR-Chirp3-HD-Charon` et `en-US-Chirp3-HD-Charon`. On peut en changer par vidéo avec `"google_voice"`, et régler le débit avec `"google_rate"`. En cas d'erreur Google (quota, clé), le moteur repasse automatiquement sur Kokoro.
+
+Ordre de priorité : Google, puis ElevenLabs (secret `ELEVENLABS_API_KEY`), puis Kokoro.
 
 On peut aussi lancer un rendu à la main : onglet *Actions* → *GTA Buzz render* → *Run workflow*.
