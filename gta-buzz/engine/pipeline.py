@@ -44,7 +44,10 @@ def build(spec_path, use_tts=True, force=False):
 def default_pinned(spec):
     """Commentaire épinglé par défaut : la question finale + relance."""
     cta = next((sc for sc in reversed(spec["scenes"]) if sc["type"] == "cta"), None)
-    q = (cta.get("small") or cta.get("big")) if cta else ""
+    cands = [cta.get("big", ""), cta.get("small", "")] if cta else []
+    q = next((c for c in cands if c.strip().endswith("?")), cands[0] if cands else "")
+    if q in ("Et toi ?", "And you?"):  # question trop vague seule : on prend la suivante
+        q = next((c for c in cands[1:] if c.strip().endswith("?")), q)
     if spec["lang"] == "fr":
         return f"{q} Réponds en commentaire 👇 D'autres vidéos GTA 6 arrivent, abonne-toi pour ne rien rater."
     return f"{q} Drop your answer below 👇 More GTA 6 videos are coming, follow so you don't miss them."
